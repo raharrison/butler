@@ -1,0 +1,116 @@
+# The canonical example from DESIGN.md §3.2. This is the product's acceptance config: it must
+# always validate with zero errors and zero warnings.
+version: 1
+
+settings:
+  state_dir: /var/lib/butler
+  log_format: json
+  max_concurrent_runs: 4
+  poll_interval: 5s
+  run_retention: { count: 200, age: 30d }
+  plugins_dir: /var/lib/butler/plugins
+
+secrets:
+  from_env: true
+  file: /etc/butler/secrets.yaml
+
+vars:
+  releases_root: /srv/apps
+
+notifiers:
+  ops:
+    uses: notify.slack
+    webhook: ${secret.SLACK_WEBHOOK}
+    channel: "#deploys"
+
+jobs:
+
+  api:
+    description: Rolling deploy of the API on new artifact
+
+    on:
+      - uses: file.appeared
+        dir: /srv/artifacts/api
+        match: 'api-(?<version>\d+\.\d+\.\d+)\.jar'
+        settle: 10s
+        order_by: semver(version)
+        on_startup: latest
+
+    concurrency:
+      group: api
+      mode: queue
+      queue_newest_only: true
+
+    timeout: 10m
+
+    discover:
+      - name: Ask the running service what it is
+        uses: http.request
+        url: http://localhost:8080/health
+        timeout: 3s
+        extract:
+          deployed_version: json.version
+
+      - name: Fall back to the symlink if the service is down
+        uses: fs.readlink
+        path: ${vars.releases_root}/api/current
+        when: not exists(state.deployed_version)
+        extract:
+          deployed_version: basename(value)
+
+    when: semver(trigger.version) > semver(default(state.deployed_version, "0.0.0"))
+
+    steps:
+      - name: Stage the release
+        uses: fs.copy
+        from: ${trigger.path}
+        to: ${vars.releases_root}/api/releases/${trigger.version}/api.jar
+        mode: "0640"
+        mkdirs: true
+
+      - name: Point current at the new release
+        uses: fs.symlink
+        link: ${vars.releases_root}/api/current
+        target: ${vars.releases_root}/api/releases/${trigger.version}
+        atomic: true
+        register: symlink
+
+      - name: Restart the service
+        uses: systemd.restart
+        unit: api.service
+        wait_active: 30s
+
+      - name: Wait for health
+        uses: http.wait
+        url: http://localhost:8080/health
+        until: status == 200 and json.version == ${trigger.version}
+        timeout: 90s
+        interval: 2s
+        register: health
+
+      - name: Prune old releases
+        uses: fs.prune
+        dir: ${vars.releases_root}/api/releases
+        keep: 5
+        continue_on_error: true
+
+    on_failure:
+      - name: Roll back symlink
+        uses: fs.symlink
+        link: ${vars.releases_root}/api/current
+        target: ${steps.symlink.previous_target}
+        atomic: true
+        when: exists(steps.symlink.previous_target)
+
+      - uses: systemd.restart
+        unit: api.service
+
+    persist:
+      deployed_version: ${trigger.version}
+      current_release: ${vars.releases_root}/api/releases/${trigger.version}
+
+    notify:
+      to: ops
+      on: [ success, failure ]
+      success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
+      failure: ":fire: api ${trigger.version} FAILED at step ${run.failed_step}"
