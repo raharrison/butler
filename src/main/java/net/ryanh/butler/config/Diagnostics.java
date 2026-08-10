@@ -62,10 +62,6 @@ public final class Diagnostics {
         return items.isEmpty();
     }
 
-    public int size() {
-        return items.size();
-    }
-
     public String render(String file) {
         StringBuilder sb = new StringBuilder();
         for (Diagnostic d : all()) {

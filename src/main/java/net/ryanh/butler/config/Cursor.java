@@ -286,15 +286,9 @@ public final class Cursor {
      * Most config bugs are typos, so this is the highest-value message in the product.
      */
     public void rejectUnknownKeys() {
-        rejectUnknownKeys(List.of());
-    }
-
-    public void rejectUnknownKeys(List<String> alsoKnown) {
-        List<String> known = new ArrayList<>(asked);
-        known.addAll(alsoKnown);
         for (String k : map.keySet()) {
-            if (!asked.contains(k) && !alsoKnown.contains(k)) {
-                diags.error(child(k), "unknown key \"" + k + "\"" + Suggestions.from(k, known));
+            if (!asked.contains(k)) {
+                diags.error(child(k), "unknown key \"" + k + "\"" + Suggestions.from(k, asked));
             }
         }
     }

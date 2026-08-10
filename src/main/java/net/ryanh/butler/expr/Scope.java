@@ -1,9 +1,7 @@
 package net.ryanh.butler.expr;
 
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Value lookup for expression evaluation, keyed by the leading path segment.
@@ -12,6 +10,7 @@ import java.util.Set;
  * locals a step injects into a condition's scope, such as {@code status} and {@code json} for
  * {@code http.wait}'s {@code until:}.
  */
+@FunctionalInterface
 public interface Scope {
 
     /**
@@ -19,41 +18,14 @@ public interface Scope {
      */
     Object root(String name);
 
-    Set<String> roots();
-
     static Scope of(Map<String, Object> values) {
         Map<String, Object> copy = new LinkedHashMap<>(values);
-        return new Scope() {
-            @Override
-            public Object root(String name) {
-                return copy.get(name);
-            }
-
-            @Override
-            public Set<String> roots() {
-                return copy.keySet();
-            }
-        };
+        return copy::get;
     }
 
-    /**
-     * A scope with step-injected locals layered on top, taking priority over the base.
-     */
+    /** A scope with step-injected locals layered on top, taking priority over the base. */
     default Scope with(Map<String, Object> locals) {
-        Scope base = this;
         Map<String, Object> extra = new LinkedHashMap<>(locals);
-        return new Scope() {
-            @Override
-            public Object root(String name) {
-                return extra.containsKey(name) ? extra.get(name) : base.root(name);
-            }
-
-            @Override
-            public Set<String> roots() {
-                Set<String> all = new LinkedHashSet<>(base.roots());
-                all.addAll(extra.keySet());
-                return all;
-            }
-        };
+        return name -> extra.containsKey(name) ? extra.get(name) : root(name);
     }
 }

@@ -3,11 +3,9 @@ package net.ryanh.butler.config;
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
 import tools.jackson.dataformat.yaml.YAMLMapper;
+import tools.jackson.dataformat.yaml.YAMLParser;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Maps a document path such as {@code /jobs/api/steps/2/uses} to its position in the source file.
@@ -19,26 +17,40 @@ import java.util.Map;
 public final class SourceMap {
 
     private final Map<String, Diagnostic.Loc> locations;
+    private final List<String> aliases;
 
-    private SourceMap(Map<String, Diagnostic.Loc> locations) {
+    private SourceMap(Map<String, Diagnostic.Loc> locations, List<String> aliases) {
         this.locations = locations;
+        this.aliases = aliases;
     }
 
     public static SourceMap empty() {
-        return new SourceMap(Map.of());
+        return new SourceMap(Map.of(), List.of());
     }
 
     public static SourceMap of(String yaml) {
         Map<String, Diagnostic.Loc> out = new HashMap<>();
+        List<String> aliases = new ArrayList<>();
         YAMLMapper mapper = YAMLMapper.builder().build();
         try (JsonParser p = mapper.createParser(yaml)) {
-            walk(p, out);
+            walk(p, out, aliases);
         } catch (RuntimeException e) {
             // A malformed document is reported by the loading pass with a better message; this
             // pass just yields whatever positions it managed to collect.
-            return new SourceMap(Map.copyOf(out));
+            return new SourceMap(Map.copyOf(out), List.copyOf(aliases));
         }
-        return new SourceMap(Map.copyOf(out));
+        return new SourceMap(Map.copyOf(out), List.copyOf(aliases));
+    }
+
+    /**
+     * Paths where the document referred to a YAML anchor, in source order.
+     *
+     * <p>The parser reports an alias as a scalar whose text is the anchor's name, so
+     * {@code copy: *base} would bind the string "base" and nobody would ever know. Only this pass
+     * can tell the difference, which is why it collects them for the loader to reject.
+     */
+    public List<String> aliases() {
+        return aliases;
     }
 
     /**
@@ -62,9 +74,10 @@ public final class SourceMap {
         }
     }
 
-    private static void walk(JsonParser p, Map<String, Diagnostic.Loc> out) {
+    private static void walk(JsonParser p, Map<String, Diagnostic.Loc> out, List<String> aliases) {
         Deque<Frame> stack = new ArrayDeque<>();
         String pendingName = null;
+        YAMLParser yaml = (YAMLParser) p;
 
         JsonToken token;
         while ((token = p.nextToken()) != null) {
@@ -77,6 +90,9 @@ public final class SourceMap {
             }
 
             String path = pathOf(stack, pendingName);
+            if (yaml.isCurrentAlias()) {
+                aliases.add(path);
+            }
 
             switch (token) {
                 case START_OBJECT, START_ARRAY -> {

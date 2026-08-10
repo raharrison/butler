@@ -1,0 +1,67 @@
+# The config the rendered plan is snapshot-tested against. It uses the step vocabulary that
+# exists today; the canonical config's fs, systemd and http steps arrive with M4.
+version: 1
+
+vars:
+  app: demo
+  releases_root: /srv/apps
+
+notifiers:
+  ops:
+    uses: notify.slack
+    channel: "#deploys"
+
+jobs:
+
+  deploy:
+    description: Rehearsal pipeline for the plan renderer
+
+    on:
+      - uses: manual
+
+    vars:
+      release_dir: ${vars.releases_root}/${vars.app}/releases
+
+    discover:
+      - name: Note what is about to happen
+        uses: control.log
+        message: looking at ${vars.app}
+
+    when: semver(trigger.version) > semver(default(state.deployed_version, "0.0.0"))
+
+    steps:
+      - name: Announce the release
+        uses: control.log
+        message: deploying ${vars.app} ${trigger.version} to ${vars.release_dir}
+        register: announce
+
+      - name: Remember where it went
+        uses: control.set
+        vars:
+          release_path: ${vars.release_dir}/${trigger.version}
+
+      - name: Confirm the path
+        uses: control.log
+        level: debug
+        message: staged at ${vars.release_path}
+        when: steps.announce.ok
+
+      - name: Only when something is already deployed
+        uses: control.log
+        message: replacing ${state.deployed_version}
+        when: exists(state.deployed_version)
+
+    on_failure:
+      - uses: control.log
+        level: error
+        message: ${vars.app} ${trigger.version} did not deploy
+
+    persist:
+      deployed_version: ${trigger.version}
+      current_release: ${vars.release_path}
+
+    notify:
+      to: ops
+      on: [ success, failure ]
+      success: ":rocket: ${vars.app} ${trigger.version} deployed in ${run.duration}"
+      failure: ":fire: ${vars.app} ${trigger.version} failed at ${run.failed_step}"

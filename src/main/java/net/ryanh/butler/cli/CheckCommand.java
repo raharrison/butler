@@ -214,7 +214,7 @@ public final class CheckCommand implements Callable<Integer> {
             Pattern.compile("[-+]?(0[xXoObB][0-9a-fA-F_]+|[0-9][0-9_]*(\\.[0-9_]*)?([eE][-+]?[0-9]+)?|\\.[0-9]+)");
 
     private static final Pattern BOOLEAN_OR_NULL = Pattern.compile(
-            "(?i)true|false|yes|no|on|off|y|n|null|~", Pattern.CASE_INSENSITIVE);
+            "true|false|yes|no|on|off|y|n|null|~", Pattern.CASE_INSENSITIVE);
 
     private static StringBuilder indent(StringBuilder sb, int depth) {
         return sb.append("  ".repeat(depth));

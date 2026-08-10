@@ -13,10 +13,6 @@ public record Diagnostic(Severity severity, String path, Loc loc, String message
     }
 
     public record Loc(int line, int col) {
-        @Override
-        public String toString() {
-            return line + ":" + col;
-        }
     }
 
     public boolean isError() {

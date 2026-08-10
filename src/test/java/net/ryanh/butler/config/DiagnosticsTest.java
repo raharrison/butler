@@ -29,6 +29,11 @@ class DiagnosticsTest {
                 "expected \"" + fragment + "\" in: " + d.message());
     }
 
+    private static void assertAt(Diagnostic d, int line, int col, String fragment) {
+        assertAt(d, line, fragment);
+        assertEquals(col, d.loc().col(), "wrong column for: " + d.message());
+    }
+
     @Nested
     @DisplayName("unknown keys")
     class UnknownKeys {
@@ -77,7 +82,8 @@ class DiagnosticsTest {
 
         @Test
         void stepParametersAreNotRejected() {
-            // Step params belong to the step type and cannot be checked until M2's registry.
+            // Step params belong to the step type, so this pass leaves them alone entirely;
+            // RegistryValidator is what checks them against the step's own record.
             var r = loadAndValidate("""
                     jobs:
                       j:
@@ -700,6 +706,63 @@ class DiagnosticsTest {
                     jobs: {}
                     """);
             assertTrue(d.message().contains("no jobs defined"), d.message());
+        }
+    }
+
+    @Nested
+    @DisplayName("YAML anchors")
+    class Anchors {
+
+        @Test
+        @DisplayName("an alias is refused, because it would bind as the anchor's name")
+        void aliasIsRejected() {
+            var d = only("""
+                    vars:
+                      base: &b hello
+                      copy: *b
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: hi}]
+                    """);
+            assertAt(d, 3, 3, "anchors and aliases are not supported");
+            assertTrue(d.message().contains("${vars.name}"), d.message());
+        }
+
+        @Test
+        @DisplayName("a merge key is an alias too, and would otherwise vanish without a word")
+        void mergeKeyIsRejected() {
+            var diags = loadAndValidate("""
+                    vars:
+                      defaults: &d
+                        uses: control.log
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - <<: *d
+                            message: hi
+                    """).diagnostics();
+            var alias = diags.all().stream()
+                    .filter(d -> d.message().contains("anchors and aliases"))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError(diags.render("x")));
+            assertAt(alias, 8, 9, "anchors and aliases are not supported");
+        }
+
+        @Test
+        @DisplayName("an anchor nobody refers to changes nothing, so it is left alone")
+        void anchorWithoutAnAliasIsFine() {
+            var r = loadAndValidate("""
+                    vars:
+                      base: &b hello
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: hi}]
+                    """);
+            assertTrue(r.diagnostics().isEmpty(), r.diagnostics().render("x"));
+            assertEquals("hello", r.config().vars().get("base"));
         }
     }
 

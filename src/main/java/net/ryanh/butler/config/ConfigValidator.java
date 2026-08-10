@@ -96,7 +96,9 @@ public final class ConfigValidator {
         allowed.addAll(STEP_LOCALS);
 
         for (StepDef step : steps) {
-            checkCondition(diags, step.path() + "/when", step.when(), allowed);
+            // A step's own "when:" decides whether to run it at all, before there is any probe to
+            // describe, so the locals a probe injects are not in scope there.
+            checkCondition(diags, step.path() + "/when", step.when(), NAMESPACES);
             step.env().forEach((k, v) ->
                     checkTemplate(diags, step.path() + "/env/" + k, v, NAMESPACES));
 

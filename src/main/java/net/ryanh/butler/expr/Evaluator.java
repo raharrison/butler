@@ -1,5 +1,7 @@
 package net.ryanh.butler.expr;
 
+import net.ryanh.butler.util.Literals;
+
 import java.time.Duration;
 import java.util.*;
 
@@ -33,6 +35,71 @@ public final class Evaluator {
 
     public boolean evalCondition(Node node) {
         return truthy(eval(node));
+    }
+
+    /**
+     * The expression with its operands replaced by the values they evaluate to, so a dry run can
+     * show {@code semver("1.2.4") > semver("1.2.3")} rather than repeating the config back.
+     *
+     * <p>Comparison and boolean structure is kept; everything below it is evaluated, which is why
+     * a call keeps its name but shows resolved arguments. An operand that cannot be evaluated
+     * falls back to how it was written.
+     */
+    public String explain(Node node) {
+        return switch (node) {
+            case Node.Lit lit -> Literals.of(lit.value());
+            case Node.Var var -> operand(var);
+            case Node.Call call -> {
+                List<String> args = new ArrayList<>(call.args().size());
+                for (Node a : call.args()) {
+                    args.add(operand(a));
+                }
+                yield call.name() + "(" + String.join(", ", args) + ")";
+            }
+            case Node.Not not -> "not " + parenthesize(not.operand(), PREC_NOT, false);
+            case Node.Bin bin -> parenthesize(bin.left(), precedence(bin.op()), false)
+                    + " " + bin.op().symbol() + " "
+                    + parenthesize(bin.right(), precedence(bin.op()), true);
+        };
+    }
+
+    private String operand(Node node) {
+        try {
+            return Literals.of(eval(node));
+        } catch (ExprException e) {
+            return explain(node);
+        }
+    }
+
+    private String parenthesize(Node child, int outer, boolean onTheRight) {
+        int inner = precedence(child);
+        boolean needed = onTheRight ? inner <= outer : inner < outer;
+        String rendered = explain(child);
+        return needed ? "(" + rendered + ")" : rendered;
+    }
+
+    private static final int PREC_OR = 0;
+    private static final int PREC_AND = 1;
+    private static final int PREC_CMP = 2;
+    private static final int PREC_NOT = 3;
+    private static final int PREC_ATOM = 4;
+
+    private static int precedence(Node node) {
+        return switch (node) {
+            case Node.Bin bin -> precedence(bin.op());
+            case Node.Not ignored -> PREC_NOT;
+            case Node.Lit ignored -> PREC_ATOM;
+            case Node.Var ignored -> PREC_ATOM;
+            case Node.Call ignored -> PREC_ATOM;
+        };
+    }
+
+    private static int precedence(Node.Op op) {
+        return switch (op) {
+            case OR -> PREC_OR;
+            case AND -> PREC_AND;
+            case EQ, NE, LT, LE, GT, GE, MATCHES, CONTAINS -> PREC_CMP;
+        };
     }
 
     private Object binary(Node.Bin bin) {
@@ -123,7 +190,7 @@ public final class Evaluator {
     private static int compare(Object l, Object r, Node.Op op) {
         if (l == null || r == null) {
             throw new ExprException("cannot compare null with " + op.symbol()
-                    + " (left=" + render(l) + ", right=" + render(r) + ")");
+                    + " (left=" + Literals.of(l) + ", right=" + Literals.of(r) + ")");
         }
         if (l instanceof Number a && r instanceof Number b) {
             return Double.compare(a.doubleValue(), b.doubleValue());
@@ -133,7 +200,7 @@ public final class Evaluator {
             Semver b = asSemver(r);
             if (a == null || b == null) {
                 throw new ExprException("cannot compare version with non-version: "
-                        + render(l) + " " + op.symbol() + " " + render(r));
+                        + Literals.of(l) + " " + op.symbol() + " " + Literals.of(r));
             }
             return a.compareTo(b);
         }
@@ -149,12 +216,6 @@ public final class Evaluator {
         if (l instanceof Collection<?> c) return c.contains(r);
         if (l instanceof Map<?, ?> m) return m.containsKey(r);
         return Functions.str(l).contains(Functions.str(r));
-    }
-
-    private static String render(Object v) {
-        if (v == null) return "null";
-        if (v instanceof String s) return "\"" + s + "\"";
-        return Functions.str(v);
     }
 
     private static String typeName(Object v) {

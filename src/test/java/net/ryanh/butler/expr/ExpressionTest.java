@@ -3,13 +3,18 @@ package net.ryanh.butler.expr;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -295,6 +300,24 @@ class ExpressionTest {
             assertEquals(42L, eval("int(\"42\")"));
             assertEquals(200L, eval("int(steps.health.status)"));
             assertThrows(ExprException.class, () -> eval("int(\"abc\")"));
+        }
+
+        @Test
+        void fileExistsAsksTheFilesystem(@TempDir Path dir) throws IOException {
+            Path present = Files.writeString(dir.resolve("artifact.jar"), "x");
+            assertTrue(cond("file_exists(\"" + present.toString().replace("\\", "/") + "\")"));
+            assertFalse(cond("file_exists(\"" + dir.resolve("absent.jar").toString()
+                    .replace("\\", "/") + "\")"));
+            assertFalse(cond("file_exists(state.absent)"), "a missing path is not a file");
+        }
+
+        @Test
+        void nowIsAnInstantThatMoves() {
+            Object first = eval("now()");
+            assertInstanceOf(Instant.class, first);
+            Instant taken = (Instant) first;
+            assertFalse(taken.isBefore(Instant.now().minusSeconds(60)));
+            assertFalse(taken.isAfter(Instant.now().plusSeconds(60)));
         }
 
         @Test

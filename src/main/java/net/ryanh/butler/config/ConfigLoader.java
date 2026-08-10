@@ -39,7 +39,9 @@ public final class ConfigLoader {
 
     public static Result parse(String yaml) {
         Diagnostics diags = new Diagnostics();
-        diags.sourceMap(SourceMap.of(yaml));
+        SourceMap sourceMap = SourceMap.of(yaml);
+        diags.sourceMap(sourceMap);
+        rejectAliases(sourceMap, diags);
 
         if (isEffectivelyEmpty(yaml)) {
             diags.error("", "the config file is empty");
@@ -68,6 +70,19 @@ public final class ConfigLoader {
         Cursor c = new Cursor(root, "", diags);
         ButlerConfig config = document(c);
         return new Result(config, diags, yaml);
+    }
+
+    /**
+     * An alias binds as the anchor's <em>name</em> rather than its value, so {@code copy: *base}
+     * would quietly become the string "base". Rather than resolve them, which would cost every
+     * later diagnostic its true line and column, the document is refused and told what to do
+     * instead.
+     */
+    private static void rejectAliases(SourceMap sourceMap, Diagnostics diags) {
+        for (String path : sourceMap.aliases()) {
+            diags.error(path, "YAML anchors and aliases are not supported; "
+                    + "repeat the value, or put it in vars: and reference it with ${vars.name}");
+        }
     }
 
     /**

@@ -85,7 +85,7 @@ class ConfigLoaderTest {
             assertEquals("fs.symlink", symlink.uses());
             assertEquals("symlink", symlink.register());
 
-            // Reserved keys must not leak into the params the step type will bind in M2.
+            // Reserved keys must not leak into the params the step type binds.
             assertEquals(Set.of("link", "target", "atomic"), symlink.params().keySet());
         }
 

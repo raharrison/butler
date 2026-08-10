@@ -3,6 +3,8 @@ name: Java CI with Gradle
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
@@ -21,4 +23,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
       - name: Build with Gradle Wrapper
-        run: chmod +x gradlew && ./gradlew --no-daemon --stacktrace shadowJar
+        run: chmod +x gradlew && ./gradlew --no-daemon --stacktrace build shadowJar
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/reports/tests/test

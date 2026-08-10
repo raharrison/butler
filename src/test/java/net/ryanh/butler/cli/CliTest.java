@@ -52,10 +52,10 @@ class CliTest {
         return p;
     }
 
-    private Path canonical() throws IOException {
-        try (InputStream in = CliTest.class.getResourceAsStream("/configs/canonical.yaml")) {
-            assertNotNull(in);
-            return write("canonical.yaml", new String(in.readAllBytes(), StandardCharsets.UTF_8));
+    private Path fixture(String name) throws IOException {
+        try (InputStream in = CliTest.class.getResourceAsStream("/configs/" + name)) {
+            assertNotNull(in, "missing fixture: " + name);
+            return write(name, new String(in.readAllBytes(), StandardCharsets.UTF_8));
         }
     }
 
@@ -72,9 +72,22 @@ class CliTest {
 
         @Test
         void goodConfigExitsZero() throws IOException {
-            int code = Main.run("validate", "-c", canonical().toString());
+            int code = Main.run("validate", "-c", fixture("plan.yaml").toString());
             assertEquals(0, code);
             assertTrue(stdout().contains("ok"), stdout());
+        }
+
+        @Test
+        @DisplayName("the canonical config names the step types this build cannot run")
+        void reportsStepTypesThatDoNotExistYet() throws IOException {
+            // The acceptance config is written against the full v1 vocabulary, which arrives with
+            // the fs, systemd and http steps. Until then validate says so, per step, with a line.
+            int code = Main.run("validate", "-c", fixture("canonical.yaml").toString());
+            assertEquals(1, code);
+            String out = stderr();
+            assertTrue(out.contains("unknown step type \"fs.copy\""), out);
+            assertTrue(out.contains("unknown trigger type \"file.appeared\""), out);
+            assertTrue(out.contains("canonical.yaml:65:9"), out);
         }
 
         @Test
@@ -152,15 +165,15 @@ class CliTest {
                       ops:
                         uses: notify.slack
                         channel: "#deploys"
+                    vars:
+                      mode: "0640"
+                      version: "1.2"
+                      flag: "true"
+                      plain: hello
                     jobs:
                       j:
                         on: [{uses: manual}]
-                        steps:
-                          - uses: fs.copy
-                            mode: "0640"
-                            version: "1.2"
-                            flag: "true"
-                            plain: hello
+                        steps: [{uses: control.log, message: hi}]
                     """);
             Main.run("check", "-c", p.toString());
             String s = stdout();
@@ -203,7 +216,69 @@ class CliTest {
         @Test
         void acceptsAValidConfig() throws IOException {
             // --check-only stands in for the daemon loop, which lands in M4.
-            assertEquals(0, Main.run("-c", canonical().toString(), "--check-only"));
+            assertEquals(0, Main.run("-c", fixture("plan.yaml").toString(), "--check-only"));
+        }
+    }
+
+    @Nested
+    @DisplayName("steps")
+    class Steps {
+
+        @Test
+        void listsEveryRegisteredTypeWithItsParameters() {
+            assertEquals(0, Main.run("steps"));
+            String s = stdout();
+            assertTrue(s.contains("control.log   Write a message into the run log"), s);
+            assertTrue(s.contains("message"), s);
+            assertTrue(s.contains("debug | info | warn | error"), s);
+            assertTrue(s.contains("control.set"), s);
+        }
+
+        @Test
+        void oneTypeAtATime() {
+            assertEquals(0, Main.run("steps", "control.set"));
+            assertTrue(stdout().contains("control.set"), stdout());
+            assertFalse(stdout().contains("control.log"), stdout());
+        }
+
+        @Test
+        void anUnknownNameSuggestsTheCloseOne() {
+            assertEquals(1, Main.run("steps", "control.lg"));
+            assertTrue(stderr().contains("did you mean \"control.log\""), stderr());
+        }
+    }
+
+    @Nested
+    @DisplayName("trigger --dry-run")
+    class DryRun {
+
+        @Test
+        void printsTheResolvedPlan() throws IOException {
+            int code = Main.run("trigger", "deploy", "-c", fixture("plan.yaml").toString(),
+                    "--dry-run", "--set", "version=1.2.4");
+            assertEquals(0, code);
+            String s = stdout();
+            assertTrue(s.startsWith("DRY RUN  job=deploy  trigger=manual  version=1.2.4"), s);
+            assertTrue(s.contains("would log [info] deploying demo 1.2.4"), s);
+            assertFalse(s.contains("${"), "a dry run resolves every value:\n" + s);
+        }
+
+        @Test
+        void reportsAProblemThatOnlyAppearsOnceValuesAreReal() throws IOException {
+            Path p = write("late.yaml", """
+                    vars: {shouting: shout}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                            message: hi
+                            level: ${vars.shouting}
+                    """);
+            assertEquals(1, Main.run("trigger", "j", "-c", p.toString(), "--dry-run"));
+            assertTrue(stderr().contains("shout"), stderr());
+            assertTrue(stdout().contains("    !  "),
+                    "the step that could not be resolved is marked in the plan:\n" + stdout());
         }
     }
 
@@ -237,6 +312,7 @@ class CliTest {
             Path p = write("min.yaml", MINIMAL);
             assertEquals(1, Main.run("trigger", "hello", "-c", p.toString()));
             assertTrue(stderr().contains("M3"), stderr());
+            assertTrue(stderr().contains("--dry-run"), "the thing that does work:\n" + stderr());
         }
 
         @Test

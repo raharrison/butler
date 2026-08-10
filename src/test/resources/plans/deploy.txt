@@ -1,0 +1,22 @@
+DRY RUN  job=deploy  trigger=manual  version=1.2.4
+
+  discover
+    1  Note what is about to happen  control.log
+         would log [info] looking at demo
+
+  when   semver("1.2.4") > semver("0.0.0")   ->   true
+
+  steps
+    1  Announce the release                     control.log
+         would log [info] deploying demo 1.2.4 to /srv/apps/demo/releases
+    2  Remember where it went                   control.set
+         would set vars.release_path = "/srv/apps/demo/releases/1.2.4"
+    3  Confirm the path                         control.log
+         would log [debug] staged at /srv/apps/demo/releases/1.2.4
+    -  Only when something is already deployed  control.log
+         skipped: when=false
+
+  on_failure                                          not shown: reached only on failure
+  persist   (not written)   deployed_version = "1.2.4"
+                            current_release  = "/srv/apps/demo/releases/1.2.4"
+  notify    (not sent)      ops <- ":rocket: demo 1.2.4 deployed in <duration>"

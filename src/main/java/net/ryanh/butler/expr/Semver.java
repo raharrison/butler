@@ -132,18 +132,6 @@ public final class Semver implements Comparable<Semver> {
         return out;
     }
 
-    public int major() {
-        return major;
-    }
-
-    public int minor() {
-        return minor;
-    }
-
-    public int patch() {
-        return patch;
-    }
-
     @Override
     public boolean equals(Object o) {
         return o instanceof Semver s && compareTo(s) == 0;
