@@ -296,6 +296,15 @@ class ExpressionTest {
         }
 
         @Test
+        @DisplayName("a single-quoted string is raw, so a regex reads as written")
+        void singleQuotesAreRaw() {
+            assertEquals("1.2.4", eval("match(trigger.path, 'api-(\\d+\\.\\d+\\.\\d+)\\.jar', 1)"));
+            assertEquals("\\d", eval("'\\d'"));
+            // Escapes still work where they are asked for.
+            assertEquals("a\nb", eval("\"a\\nb\""));
+        }
+
+        @Test
         void intConversion() {
             assertEquals(42L, eval("int(\"42\")"));
             assertEquals(200L, eval("int(steps.health.status)"));
@@ -528,6 +537,37 @@ class ExpressionTest {
                     .map(Node.Var::root)
                     .toList();
             assertEquals(List.of("vars", "trigger"), roots);
+        }
+    }
+
+    @Nested
+    @DisplayName("deciding a condition")
+    class Decisions {
+
+        @Test
+        void explainsWithTheValuesItJudged() {
+            Evaluator.Decision d = new Evaluator(SCOPE)
+                    .decide(Expressions.condition("semver(trigger.version) > semver(\"1.0.0\")"));
+
+            assertEquals("semver(\"1.2.4\") > semver(\"1.0.0\")", d.explained());
+            assertTrue(d.result());
+        }
+
+        @Test
+        @DisplayName("reads each value once, so the explanation cannot disagree with the verdict")
+        void evaluatesOncePerNode() {
+            // Answers differently every time it is asked, as now() does.
+            int[] reads = {0};
+            Scope changing = name -> name.equals("counter") ? (long) ++reads[0] : SCOPE.root(name);
+
+            Evaluator.Decision d = new Evaluator(changing)
+                    .decide(Expressions.condition("counter < 2"));
+
+            // Explaining and judging separately would read 1 for the report and 2 for the verdict,
+            // and report "1 < 2 -> false".
+            assertEquals("1 < 2", d.explained());
+            assertTrue(d.result());
+            assertEquals(1, reads[0], "one read, not one per pass");
         }
     }
 }

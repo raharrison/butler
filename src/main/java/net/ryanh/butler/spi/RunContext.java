@@ -35,6 +35,25 @@ public interface RunContext {
     boolean evaluate(String condition);
 
     /**
+     * A view of this context with step-injected locals layered over the namespaces, winning where a
+     * name collides. This is what {@code http.wait}'s {@code until:} sees its probe through and what
+     * {@code extract:} evaluates against (DESIGN.md §4).
+     */
+    RunContext withLocals(Map<String, Object> locals);
+
+    /**
+     * How this step starts a process.
+     */
+    ProcessRunner processes();
+
+    /**
+     * This step's process settings as a command with no argv yet: {@code working_dir}, its
+     * {@code env} merged over the job's, {@code run_as} and the time it is allowed. A step that
+     * forks fills in the argv and hands it to {@link #processes()}.
+     */
+    ProcessRunner.Command command();
+
+    /**
      * Whether this run is only being described. Steps rarely need it; the runtime decides.
      */
     boolean dryRun();

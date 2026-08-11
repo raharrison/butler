@@ -1,19 +1,21 @@
 package net.ryanh.butler.runtime;
 
 import net.ryanh.butler.config.ConfigLoader;
-import net.ryanh.butler.config.ConfigValidator;
 import net.ryanh.butler.config.Diagnostics;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.spi.RunContext;
 import net.ryanh.butler.spi.StepResult;
 import net.ryanh.butler.spi.StepType;
+import net.ryanh.butler.testing.Fixture;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,12 +34,14 @@ class PlanTest {
         }
     }
 
-    private static Built build(String yaml, String job, StepRegistry registry,
-                               Map<String, Object> facts) {
-        ConfigLoader.Result r = ConfigLoader.parse(yaml);
-        ConfigValidator.validate(r.config(), r.diagnostics());
-        Plan plan = PlanBuilder.build(r.config(), r.config().jobs().get(job),
-                new Event("manual", facts, null), registry, r.diagnostics());
+    @TempDir
+    Path stateDir;
+
+    private Built build(String yaml, String job, StepRegistry registry,
+                        Map<String, Object> facts) {
+        ConfigLoader.Result r = Fixture.config(yaml, registry);
+        Plan plan = PlanBuilder.build(Fixture.environment(r, registry, stateDir),
+                r.config().jobs().get(job), new Event("manual", facts, null), r.diagnostics());
         return new Built(plan, r.diagnostics());
     }
 
@@ -110,25 +114,47 @@ class PlanTest {
         }
 
         @Test
-        @DisplayName("keeps discover's findings even when the job's when is false, since they are "
+        @DisplayName("keeps what discover observed even when the job's when is false, since it is "
                 + "still true of this host")
-        void discoverWarningsSurviveASkippedRun() {
-            StepRegistry registry = StepRegistry.of(
-                    new FakeStep("test.warn").warning("the health endpoint is not answering"));
+        void discoverFindingsSurviveASkippedRun() {
             Built built = build("""
                     jobs:
                       j:
                         on: [{uses: manual}]
                         discover:
                           - name: Look
-                            uses: test.warn
+                            uses: control.set
+                            vars: {observed: 1.2.3}
+                            extract:
+                              deployed_version: vars.observed
                         when: trigger.version == "9.9.9"
                         steps: [{uses: control.log, message: go}]
-                    """, "j", registry, Map.of("version", "1.0.0"));
+                    """, "j", StepRegistry.discover(), Map.of("version", "1.0.0"));
 
             String out = built.rendered();
             assertTrue(out.contains("not run: the job's when is false"), out);
-            assertTrue(out.contains("discover 1  the health endpoint is not answering"), out);
+            assertTrue(out.contains("state.deployed_version = \"1.2.3\""), out);
+        }
+
+        @Test
+        @DisplayName("promises no notification the run would not send")
+        void notifyRespectsTheOutcomesItFiresOn() {
+            Built built = build("""
+                    notifiers:
+                      ops: {uses: notify.slack}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: go}]
+                        notify:
+                          to: ops
+                          on: [failure]
+                          success: ":rocket: this must never be sent"
+                    """, "j", StepRegistry.discover(), Map.of());
+
+            assertNull(built.plan().notification(),
+                    "the policy fires on failure only, so a successful run notifies nobody");
+            assertFalse(built.rendered().contains("notify"), built.rendered());
         }
 
         @Test
@@ -177,7 +203,7 @@ class PlanTest {
 
             assertEquals("", built.diagnostics().render("x"));
             assertEquals(List.of("value = a-real-value"),
-                    built.plan().steps().get(1).describe());
+                    built.plan().steps().get(1).body());
         }
 
         @Test
@@ -195,7 +221,7 @@ class PlanTest {
                     """, "j", StepRegistry.discover(), Map.of());
 
             assertEquals(List.of("would log [info] hello there"),
-                    built.plan().steps().get(1).describe());
+                    built.plan().steps().get(1).body());
         }
 
         @Test
@@ -213,7 +239,7 @@ class PlanTest {
                     """, "j", registry, Map.of());
 
             assertEquals("", built.diagnostics().render("x"));
-            assertEquals(List.of("count = 5"), built.plan().steps().getFirst().describe());
+            assertEquals(List.of("count = 5"), built.plan().steps().getFirst().body());
         }
     }
 
@@ -254,7 +280,7 @@ class PlanTest {
 
             assertEquals("", built.diagnostics().render("x"));
             assertEquals(List.of("would log [info] shell wants ${HOME}, and the event brought "
-                    + "${oops}"), built.plan().steps().getFirst().describe());
+                    + "${oops}"), built.plan().steps().getFirst().body());
         }
 
         @Test

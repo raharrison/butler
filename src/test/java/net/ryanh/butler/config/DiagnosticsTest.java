@@ -254,15 +254,15 @@ class DiagnosticsTest {
 
         @Test
         void conditionParametersAreValidatedEvenWithoutADollarHole() {
-            // until: is a bare condition, not a template. Treating it as a template would mean
-            // text containing no ${} was never parsed at all.
+            // control.assert's that: is a bare condition, not a template. Treating it as a
+            // template would mean text containing no ${} was never parsed at all.
             var d = only("""
                     jobs:
                       j:
                         on: [{uses: manual}]
                         steps:
-                          - uses: http.wait
-                            until: nosuchns.value == 200
+                          - uses: control.assert
+                            that: nosuchns.value == 200
                     """);
             assertAt(d, 6, "unknown namespace \"nosuchns\"");
         }
@@ -274,8 +274,8 @@ class DiagnosticsTest {
                       j:
                         on: [{uses: manual}]
                         steps:
-                          - uses: http.wait
-                            until: status == = 200
+                          - uses: control.assert
+                            that: status == = 200
                     """);
             assertAt(d, 6, "invalid condition");
         }
@@ -287,8 +287,8 @@ class DiagnosticsTest {
                       j:
                         on: [{uses: manual}]
                         steps:
-                          - uses: http.wait
-                            until: status == 200 and json.version == "1.0.0"
+                          - uses: control.assert
+                            that: status == 200 and json.version == "1.0.0"
                     """);
             assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
         }
@@ -300,8 +300,8 @@ class DiagnosticsTest {
                       j:
                         on: [{uses: manual}]
                         steps:
-                          - uses: http.wait
-                            until: steps.nope.ok
+                          - uses: control.assert
+                            that: steps.nope.ok
                     """);
             assertTrue(d.message().contains("steps.nope"), d.message());
         }

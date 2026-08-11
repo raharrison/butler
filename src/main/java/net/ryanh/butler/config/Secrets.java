@@ -1,6 +1,7 @@
 package net.ryanh.butler.config;
 
 import net.ryanh.butler.config.model.ButlerConfig;
+import net.ryanh.butler.util.Literals;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
@@ -53,11 +54,21 @@ public final class Secrets extends AbstractMap<String, Object> {
                     values.putAll(read);
                 }
             } catch (IOException | RuntimeException e) {
-                diags.error("/secrets/file", "could not read secrets from " + file + ": "
-                        + e.getMessage());
+                diags.error("/secrets/file", "could not read secrets from " + Literals.path(file)
+                        + ": " + firstLine(e));
             }
         }
         return new Secrets(Collections.unmodifiableMap(values), config.fromEnv());
+    }
+
+    /**
+     * A parser failure arrives as a paragraph of context and a Java reference chain, neither of
+     * which says anything to someone reading a YAML file.
+     */
+    private static String firstLine(Exception e) {
+        String message = e.getMessage();
+        return message == null || message.isBlank()
+                ? e.getClass().getSimpleName() : message.split("\n")[0].strip();
     }
 
     @Override

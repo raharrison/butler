@@ -1,5 +1,7 @@
 package net.ryanh.butler.spi;
 
+import java.util.List;
+
 /**
  * A long-lived watcher that emits events. Like {@link StepType}, a record plus a class.
  *
@@ -18,4 +20,16 @@ public interface TriggerType<C> {
     Class<C> configType();
 
     Watcher start(C config, EventSink sink, TriggerContext ctx);
+
+    /**
+     * The events this trigger would fire for as things stand right now, oldest first, without
+     * starting a watcher.
+     *
+     * <p>{@code butler trigger} rehearses against the newest of these, and {@code butler adopt}
+     * records its dedupe key so an artifact already present does not fire when the daemon starts
+     * (DESIGN.md §6.3). A trigger with nothing to observe has no candidates.
+     */
+    default List<Event> current(C config, TriggerContext ctx) {
+        return List.of();
+    }
 }

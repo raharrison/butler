@@ -49,7 +49,8 @@ public final class PlanRenderer {
 
         if (!plan.discover().isEmpty()) {
             out.add("");
-            out.add("  discover");
+            // Labelled because this is the one place a dry run touches the host.
+            out.add("  discover  (executed for real)");
             section(out, plan.discover());
         }
 
@@ -88,7 +89,7 @@ public final class PlanRenderer {
         return String.join("\n", out) + "\n";
     }
 
-    private static void section(List<String> out, List<Plan.Entry> entries) {
+    static void section(List<String> out, List<Plan.Entry> entries) {
         int width = 0;
         for (Plan.Entry e : entries) {
             width = Math.max(width, e.label().length());
@@ -101,7 +102,7 @@ public final class PlanRenderer {
             if (e.error() != null) {
                 out.add(BODY_INDENT + "error: " + e.error());
             }
-            for (String line : e.describe()) {
+            for (String line : e.body()) {
                 out.add(BODY_INDENT + line);
             }
         }
@@ -159,7 +160,7 @@ public final class PlanRenderer {
     /**
      * Pads to exactly {@code width}; call sites add whatever separator they want after it.
      */
-    private static String pad(String text, int width) {
+    static String pad(String text, int width) {
         return text.length() >= width ? text : text + " ".repeat(width - text.length());
     }
 }

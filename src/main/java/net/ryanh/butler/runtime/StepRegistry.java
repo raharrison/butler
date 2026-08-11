@@ -62,6 +62,19 @@ public final class StepRegistry {
         return byName.keySet();
     }
 
+    /**
+     * Every parameter name some registered step reads as a condition rather than as a string
+     * template. The union across step types, because the config validator checks expressions
+     * before anything has resolved a {@code uses:} to a type.
+     */
+    public Set<String> conditionParams() {
+        Set<String> out = new LinkedHashSet<>();
+        for (StepType<?> type : byName.values()) {
+            out.addAll(type.conditions());
+        }
+        return Collections.unmodifiableSet(out);
+    }
+
     public Collection<StepType<?>> all() {
         return byName.values();
     }

@@ -22,10 +22,16 @@ jobs:
     vars:
       release_dir: ${vars.releases_root}/${vars.app}/releases
 
+    # Discovery runs for real, even in a dry run, so this config observes the host with a step
+    # that touches nothing: control.set stands in for the fs.readlink or http.request a real
+    # deployment would ask, which arrive with the rest of the v1 vocabulary.
     discover:
-      - name: Note what is about to happen
-        uses: control.log
-        message: looking at ${vars.app}
+      - name: Ask what is deployed
+        uses: control.set
+        vars:
+          observed: 1.2.3
+        extract:
+          deployed_version: vars.observed
 
     when: semver(trigger.version) > semver(default(state.deployed_version, "0.0.0"))
 

@@ -122,6 +122,42 @@ class CliTest {
         }
 
         @Test
+        @DisplayName("a secrets file that cannot be read is an error, not a run where every "
+                + "secret is empty")
+        void unreadableSecretsFile() throws IOException {
+            write("secrets.yaml", "this: [is not, valid\n");
+            Path p = write("secrets-config.yaml", """
+                    secrets:
+                      file: %s
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: hi}]
+                    """.formatted(dir.resolve("secrets.yaml").toString().replace('\\', '/')));
+
+            assertEquals(1, Main.run("validate", "-c", p.toString()));
+            assertTrue(stderr().contains("could not read secrets"), stderr());
+            assertEquals(1, Main.run("trigger", "j", "-c", p.toString()),
+                    "and the same on the path that would actually use them");
+        }
+
+        @Test
+        @DisplayName("a secrets file that is named but absent is not an error, since a config is "
+                + "often validated somewhere other than the host it runs on")
+        void absentSecretsFileIsFine() throws IOException {
+            Path p = write("absent-secrets.yaml", """
+                    secrets:
+                      file: %s
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: hi}]
+                    """.formatted(dir.resolve("nope.yaml").toString().replace('\\', '/')));
+
+            assertEquals(0, Main.run("validate", "-c", p.toString()), stderr());
+        }
+
+        @Test
         void missingFileIsReportedClearly() {
             int code = Main.run("validate", "-c", dir.resolve("nope.yaml").toString());
             assertEquals(1, code);
@@ -283,6 +319,85 @@ class CliTest {
     }
 
     @Nested
+    @DisplayName("trigger, for real")
+    class RealRun {
+
+        /**
+         * Every run writes state, so a test config keeps the state directory in the temp dir.
+         */
+        private Path config(String job) throws IOException {
+            return write("run.yaml", """
+                    settings:
+                      state_dir: %s
+                    jobs:
+                      %s
+                    """.formatted(dir.toString().replace('\\', '/'), job));
+        }
+
+        @Test
+        void runsThePipelineAndReportsHowItWent() throws IOException {
+            Path p = config("""
+                    greet:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Say hello
+                            uses: control.set
+                            vars: {who: world}
+                          - name: Prove it
+                            uses: control.assert
+                            that: vars.who == "world"
+                        persist:
+                          greeted: ${vars.who}
+                    """);
+            assertEquals(0, Main.run("trigger", "greet", "-c", p.toString()));
+
+            String s = stdout();
+            assertTrue(s.startsWith("RUN  job=greet  trigger=manual"), s);
+            assertTrue(s.contains("SUCCESS in"), s);
+            assertTrue(Files.readString(dir.resolve("jobs/greet.json")).contains("\"world\""),
+                    "persist: is written after a successful run");
+        }
+
+        @Test
+        void aFailingStepExitsOneAndNamesTheStep() throws IOException {
+            Path p = config("""
+                    broken:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Give up
+                            uses: control.fail
+                            message: nothing works
+                    """);
+            assertEquals(1, Main.run("trigger", "broken", "-c", p.toString()));
+            assertTrue(stdout().contains("FAILED"), stdout());
+            assertTrue(stdout().contains("nothing works"), stdout());
+        }
+
+        @Test
+        @DisplayName("adopt records what the host says and executes no steps")
+        void adoptSeedsState() throws IOException {
+            Path p = config("""
+                    api:
+                        on: [{uses: manual}]
+                        discover:
+                          - uses: control.set
+                            vars: {seen: "1.2.3"}
+                            extract:
+                              deployed_version: vars.seen
+                        when: trigger.version != state.deployed_version
+                        steps:
+                          - uses: control.fail
+                            message: adopt must never run a step
+                    """);
+            assertEquals(0, Main.run("adopt", "api", "-c", p.toString()));
+
+            String s = stdout();
+            assertTrue(s.contains("state.deployed_version = \"1.2.3\""), s);
+            assertTrue(Files.readString(dir.resolve("jobs/api.json")).contains("1.2.3"), s);
+        }
+    }
+
+    @Nested
     @DisplayName("usage")
     class Usage {
 
@@ -308,15 +423,7 @@ class CliTest {
         }
 
         @Test
-        void unimplementedCommandsSayWhichMilestone() throws IOException {
-            Path p = write("min.yaml", MINIMAL);
-            assertEquals(1, Main.run("trigger", "hello", "-c", p.toString()));
-            assertTrue(stderr().contains("M3"), stderr());
-            assertTrue(stderr().contains("--dry-run"), "the thing that does work:\n" + stderr());
-        }
-
-        @Test
-        void triggerRejectsAnUnknownJobBeforeComplainingAboutTheMilestone() throws IOException {
+        void triggerRejectsAnUnknownJob() throws IOException {
             Path p = write("min.yaml", MINIMAL);
             assertEquals(1, Main.run("trigger", "nope", "-c", p.toString()));
             assertTrue(stderr().contains("no job named \"nope\""), stderr());

@@ -139,7 +139,7 @@ public final class ConfigLoader {
         ButlerConfig.Settings d = ButlerConfig.Settings.defaults();
         String stateDir = c.string("state_dir", d.stateDir().toString());
         Enums.LogFormat logFormat = c.enumValue("log_format", Enums.LogFormat.class, d.logFormat());
-        Integer maxRuns = c.integer("max_concurrent_runs", d.maxConcurrentRuns());
+        int maxRuns = c.integer("max_concurrent_runs", d.maxConcurrentRuns());
         Duration poll = c.duration("poll_interval", d.pollInterval());
 
         Cursor rc = c.object("run_retention");
@@ -151,14 +151,12 @@ public final class ConfigLoader {
         String plugins = c.string("plugins_dir", null);
         c.rejectUnknownKeys();
 
-        if (maxRuns != null && maxRuns < 1) {
+        if (maxRuns < 1) {
             c.diagnostics().error("/settings/max_concurrent_runs",
                     "must be at least 1, found " + maxRuns);
         }
         return new ButlerConfig.Settings(
-                Path.of(stateDir), logFormat,
-                maxRuns == null ? d.maxConcurrentRuns() : maxRuns,
-                poll, retention,
+                Path.of(stateDir), logFormat, maxRuns, poll, retention,
                 plugins == null ? null : Path.of(plugins));
     }
 
@@ -297,14 +295,14 @@ public final class ConfigLoader {
         if (!present) {
             return null;
         }
-        Integer attempts = c.integer("attempts", 1);
+        int attempts = c.integer("attempts", 1);
         Duration delay = c.duration("delay", Duration.ZERO);
         Enums.Backoff backoff = c.enumValue("backoff", Enums.Backoff.class, Enums.Backoff.FIXED);
         Enums.RetryOn on = c.enumValue("on", Enums.RetryOn.class, Enums.RetryOn.FAILURE);
         c.rejectUnknownKeys();
-        if (attempts != null && attempts < 1) {
+        if (attempts < 1) {
             c.diagnostics().error(c.path() + "/attempts", "must be at least 1, found " + attempts);
         }
-        return new RetryDef(attempts == null ? 1 : attempts, delay, backoff, on);
+        return new RetryDef(attempts, delay, backoff, on);
     }
 }

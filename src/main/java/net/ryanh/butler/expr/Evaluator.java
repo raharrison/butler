@@ -12,11 +12,28 @@ public final class Evaluator {
 
     private final Scope scope;
 
+    /**
+     * Set only while {@link #decide} is running, so the explanation and the verdict see the same
+     * values. Null the rest of the time, when every node is evaluated on demand.
+     */
+    private Map<Node, Object> memo;
+
     public Evaluator(Scope scope) {
         this.scope = scope;
     }
 
     public Object eval(Node node) {
+        if (memo != null && memo.containsKey(node)) {
+            return memo.get(node);
+        }
+        Object value = evalUncached(node);
+        if (memo != null) {
+            memo.put(node, value);
+        }
+        return value;
+    }
+
+    private Object evalUncached(Node node) {
         // No default branch: Node is sealed, so adding a node type breaks this switch on purpose.
         return switch (node) {
             case Node.Lit lit -> lit.value();
@@ -35,6 +52,27 @@ public final class Evaluator {
 
     public boolean evalCondition(Node node) {
         return truthy(eval(node));
+    }
+
+    /**
+     * A condition's verdict together with the explained form behind it.
+     */
+    public record Decision(String explained, boolean result) {
+    }
+
+    /**
+     * Judges a condition and explains it in one pass, so the two cannot disagree. Evaluating twice
+     * would let a report show values the verdict was not made from, since {@code now()} is not
+     * pure.
+     */
+    public Decision decide(Node node) {
+        memo = new IdentityHashMap<>();
+        try {
+            String explained = explain(node);
+            return new Decision(explained, truthy(eval(node)));
+        } finally {
+            memo = null;
+        }
     }
 
     /**

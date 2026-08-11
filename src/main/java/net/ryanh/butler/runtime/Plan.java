@@ -24,13 +24,15 @@ public record Plan(
     /**
      * One step of the plan.
      *
-     * @param number   position within its section, or 0 when the step would not run
-     * @param describe the step's own account of its effect, one entry per line
-     * @param skipped  why the step would not run, or null
-     * @param error    what stopped the step being described at all, or null
+     * @param number  position within its section, or 0 when the step would not run
+     * @param body    what the step has to say for itself, one entry per line: its {@code describe()}
+     *                in the pipeline, and what it actually observed in {@code discover:}, which
+     *                runs for real
+     * @param skipped why the step would not run, or null
+     * @param error   what stopped the step being described at all, or null
      */
     public record Entry(String section, int number, String label, String uses,
-                        List<String> describe, List<String> warnings,
+                        List<String> body, List<String> warnings,
                         String skipped, String error) {
 
         public static Entry skipped(String section, String label, String uses, String reason) {

@@ -1,14 +1,12 @@
 package net.ryanh.butler.runtime;
 
 import net.ryanh.butler.config.Diagnostics;
-import net.ryanh.butler.config.Secrets;
-import net.ryanh.butler.config.model.ButlerConfig;
+import net.ryanh.butler.config.model.Enums;
 import net.ryanh.butler.config.model.JobDef;
 import net.ryanh.butler.config.model.StepDef;
 import net.ryanh.butler.expr.ExprException;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.spi.StepResult;
-import net.ryanh.butler.spi.StepType;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -19,28 +17,28 @@ import java.util.Map;
  * Turns a job and an event into a {@link Plan}.
  *
  * <p>Resolution is lazy per step rather than eager over the whole pipeline, because a step's
- * parameters may refer to {@code steps.earlier.*} and cannot be resolved until that result exists.
- * Each step is therefore resolved, described and simulated in turn, and what it produced is in the
- * context before the next one is looked at.
+ * parameters may refer to {@code steps.earlier.*}. Each step is resolved, described and simulated
+ * in turn, and what it produced is in the context before the next one is looked at.
  *
- * <p>Nothing here calls {@code execute()}. The choice between executing and describing belongs to
- * the runtime, so a step author has no way to leak a side effect into a dry run.
+ * <p>Nothing in the pipeline calls {@code execute()}: the choice between executing and describing
+ * belongs to the runtime, so a step author cannot leak a side effect into a dry run.
+ * {@code discover:} is the one deliberate exception and runs for real (DESIGN.md §6.2).
  */
 public final class PlanBuilder {
 
     private PlanBuilder() {
     }
 
-    public static Plan build(ButlerConfig config, JobDef job, Event event,
-                             StepRegistry registry, Diagnostics diags) {
-        Context ctx = Context.forPlan(config, job, event, Secrets.load(config.secrets(), diags));
+    public static Plan build(RunEnvironment env, JobDef job, Event event, Diagnostics diags) {
+        StateStore.JobState persisted = env.state().read(job.name());
+        Context ctx = Context.forPlan(env, job, event, persisted.values());
 
-        List<Plan.Entry> discover = entries("discover", job.discover(), ctx, registry, diags);
+        List<Plan.Entry> discover = Discovery.run(job, env.steps(), ctx);
         Plan.Decision when = decide(job, ctx, diags);
 
         boolean wouldRun = when == null || when.result();
         List<Plan.Entry> steps = wouldRun
-                ? entries("step", job.steps(), ctx, registry, diags)
+                ? entries("step", job.steps(), job, ctx, env.steps(), diags)
                 : List.of();
 
         List<Plan.Hook> hooks = wouldRun ? hooks(job) : List.of();
@@ -73,24 +71,30 @@ public final class PlanBuilder {
     }
 
     /**
-     * A job whose condition cannot be evaluated is reported and treated as not running, rather
-     * than guessed at: the whole point of showing the decision is that it can be trusted.
+     * A job whose condition cannot be evaluated is reported and treated as not running rather than
+     * guessed at, since the point of showing the decision is that it can be trusted.
      */
     private static Plan.Decision decide(JobDef job, Context ctx, Diagnostics diags) {
         if (job.when() == null) {
             return null;
         }
         try {
-            String explained = ctx.explain(job.when());
-            return new Plan.Decision(job.when(), explained, ctx.evaluate(job.when()), null);
+            var decision = ctx.decide(job.when());
+            return new Plan.Decision(job.when(), decision.explained(), decision.result(), null);
         } catch (ExprException e) {
             diags.error(job.path() + "/when", "could not be evaluated: " + e.getMessage());
             return new Plan.Decision(job.when(), job.when(), false, e.getMessage());
         }
     }
 
+    /**
+     * The message a successful run would send, judged the same way {@code JobRunner} judges it. A
+     * plan promising a notification the run would not send is the divergence dry run exists to
+     * eliminate.
+     */
     private static Plan.Notification notification(JobDef job, Context ctx) {
-        if (job.notifyPolicy() == null) {
+        if (job.notifyPolicy() == null
+                || !job.notifyPolicy().on().contains(Enums.Outcome.SUCCESS)) {
             return null;
         }
         String message = job.notifyPolicy().messages().get("success");
@@ -100,12 +104,12 @@ public final class PlanBuilder {
         return new Plan.Notification(job.notifyPolicy().to(), ctx.resolve(message));
     }
 
-    private static List<Plan.Entry> entries(String section, List<StepDef> defs, Context ctx,
-                                            StepRegistry registry, Diagnostics diags) {
+    private static List<Plan.Entry> entries(String section, List<StepDef> defs, JobDef job,
+                                            Context ctx, StepRegistry registry, Diagnostics diags) {
         List<Plan.Entry> out = new ArrayList<>();
         int number = 0;
         for (StepDef def : defs) {
-            Plan.Entry entry = entry(section, number + 1, def, ctx, registry, diags);
+            Plan.Entry entry = entry(section, number + 1, def, job, ctx, registry, diags);
             if (entry.number() > 0) {
                 number++;
             }
@@ -114,46 +118,46 @@ public final class PlanBuilder {
         return List.copyOf(out);
     }
 
-    @SuppressWarnings("unchecked")
-    private static Plan.Entry entry(String section, int number, StepDef def, Context ctx,
-                                    StepRegistry registry, Diagnostics diags) {
-        StepType<Object> type = (StepType<Object>) registry.find(def.uses());
-        if (type == null) {
-            String problem = "unknown step type \"" + def.uses() + "\"";
-            diags.error(def.path() + "/uses", problem);
-            return Plan.Entry.failed(section, def.label(), def.uses(), problem);
-        }
-
-        if (def.when() != null) {
-            try {
-                if (!ctx.evaluate(def.when())) {
-                    return Plan.Entry.skipped(section, def.label(), def.uses(),
-                            "skipped: when=false");
-                }
-            } catch (ExprException e) {
-                diags.error(def.path() + "/when", "could not be evaluated: " + e.getMessage());
-                return Plan.Entry.failed(section, def.label(), def.uses(),
-                        "when could not be evaluated: " + e.getMessage());
+    private static Plan.Entry entry(String section, int number, StepDef def, JobDef job,
+                                    Context ctx, StepRegistry registry, Diagnostics diags) {
+        StepResolver.Resolved resolved = StepResolver.resolve(def, job, registry, ctx,
+                def.timeout());
+        switch (resolved) {
+            case StepResolver.Skipped skipped -> {
+                return Plan.Entry.skipped(section, def.label(), def.uses(), skipped.reason());
+            }
+            case StepResolver.Unresolvable bad -> {
+                diags.error(pathFor(def, bad), bad.problem());
+                return Plan.Entry.failed(section, def.label(), def.uses(), bad.problem());
+            }
+            case StepResolver.Ready ready -> {
+                return described(section, number, def, ready, ctx, diags);
             }
         }
+    }
 
-        Object params;
-        Map<String, Object> resolved;
-        try {
-            resolved = resolved(def, ctx);
-            params = Params.bind(type.configType(), resolved);
-        } catch (ExprException | Params.BindingException e) {
-            diags.error(def.path(), e.getMessage());
-            return Plan.Entry.failed(section, def.label(), def.uses(), e.getMessage());
+    /**
+     * An unknown type or an unevaluable condition points at the key that is wrong; anything else
+     * is about the parameters as a whole, so it points at the step.
+     */
+    private static String pathFor(StepDef def, StepResolver.Unresolvable bad) {
+        if (bad.problem().startsWith("unknown step type")) {
+            return def.path() + "/uses";
         }
+        return bad.problem().startsWith("when could not be evaluated")
+                ? def.path() + "/when" : def.path();
+    }
 
+    private static Plan.Entry described(String section, int number, StepDef def,
+                                        StepResolver.Ready ready, Context ctx, Diagnostics diags) {
         String described;
         List<String> warnings;
         StepResult simulated;
         try {
-            described = type.describe(params, ctx);
-            warnings = List.copyOf(type.preflight(params, ctx));
-            simulated = type.simulate(params, ctx);
+            described = ready.type().describe(ready.params(), ready.ctx());
+            warnings = List.copyOf(ready.type().preflight(ready.params(), ready.ctx()));
+            StepResult produced = ready.type().simulate(ready.params(), ready.ctx());
+            simulated = produced == null ? StepResult.ok() : produced;
         } catch (RuntimeException e) {
             String problem = def.uses() + " could not describe itself: " + e;
             diags.error(def.path(), problem);
@@ -162,26 +166,19 @@ public final class PlanBuilder {
 
         // Only a hole the step invented is a defect: $${ and a shell script full of ${VAR} both
         // reach describe() legitimately, and the resolved parameters are what tell them apart.
-        if (described != null && described.contains("${") && !Params.containsTemplate(resolved)) {
+        if (described != null && described.contains("${")
+                && !Params.containsTemplate(ready.rawParams())) {
             String problem = def.uses() + " left an unresolved ${...} in its description: "
                     + described.strip();
             diags.error(def.path(), problem);
             return Plan.Entry.failed(section, def.label(), def.uses(), problem);
         }
 
-        if (def.register() != null) {
-            ctx.register(def.register(), simulated);
-        }
-        ctx.applyVars(simulated.vars());
+        StepResolver.record(def, simulated, ctx);
 
         List<String> lines = described == null || described.isBlank()
                 ? List.of()
                 : List.of(described.stripTrailing().split("\n"));
         return new Plan.Entry(section, number, def.label(), def.uses(), lines, warnings, null, null);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> resolved(StepDef def, Context ctx) {
-        return (Map<String, Object>) ctx.resolveDeep(def.params());
     }
 }

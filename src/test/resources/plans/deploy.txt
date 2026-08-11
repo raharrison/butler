@@ -1,10 +1,10 @@
 DRY RUN  job=deploy  trigger=manual  version=1.2.4
 
-  discover
-    1  Note what is about to happen  control.log
-         would log [info] looking at demo
+  discover  (executed for real)
+    1  Ask what is deployed  control.set
+         state.deployed_version = "1.2.3"
 
-  when   semver("1.2.4") > semver("0.0.0")   ->   true
+  when   semver("1.2.4") > semver("1.2.3")   ->   true
 
   steps
     1  Announce the release                     control.log
@@ -13,8 +13,8 @@ DRY RUN  job=deploy  trigger=manual  version=1.2.4
          would set vars.release_path = "/srv/apps/demo/releases/1.2.4"
     3  Confirm the path                         control.log
          would log [debug] staged at /srv/apps/demo/releases/1.2.4
-    -  Only when something is already deployed  control.log
-         skipped: when=false
+    4  Only when something is already deployed  control.log
+         would log [info] replacing 1.2.3
 
   on_failure                                          not shown: reached only on failure
   persist   (not written)   deployed_version = "1.2.4"

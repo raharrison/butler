@@ -35,6 +35,15 @@ public interface StepType<C> {
     String describe(C config, RunContext ctx);
 
     /**
+     * Parameters this step reads as a bare condition rather than as a string template, such as
+     * {@code until:} on a probe or {@code that:} on an assertion. The runtime hands those through
+     * unrendered, because a condition is parsed rather than interpolated (DESIGN.md §4).
+     */
+    default List<String> conditions() {
+        return List.of();
+    }
+
+    /**
      * Read-only checks: does the source exist, is the target writable, is the unit known.
      */
     default List<String> preflight(C config, RunContext ctx) {

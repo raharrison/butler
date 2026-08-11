@@ -5,6 +5,7 @@ import net.ryanh.butler.config.model.JobDef;
 import net.ryanh.butler.config.model.StepDef;
 import net.ryanh.butler.config.model.TriggerDef;
 import net.ryanh.butler.util.Durations;
+import net.ryanh.butler.util.Literals;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 
@@ -179,15 +180,22 @@ public final class CheckCommand implements Callable<Integer> {
             return Durations.format(d);
         }
         if (v instanceof Path p) {
-            // Configs are written for Linux hosts; rendering a checked config with Windows
-            // separators just because the check ran on Windows would misreport it.
-            return p.toString().replace('\\', '/');
+            return Literals.path(p);
         }
         if (v instanceof Boolean || v instanceof Number) {
             return String.valueOf(v);
         }
         String s = String.valueOf(v);
-        return needsQuoting(s) ? "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"" : s;
+        if (s.contains("\n")) {
+            // A shell.run script is the first multi-line value in the vocabulary. Printed raw it
+            // would be a quoted string with real newlines inside it, which is not valid YAML.
+            return "\"" + escape(s).replace("\n", "\\n") + "\"";
+        }
+        return needsQuoting(s) ? "\"" + escape(s) + "\"" : s;
+    }
+
+    private static String escape(String s) {
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     /**

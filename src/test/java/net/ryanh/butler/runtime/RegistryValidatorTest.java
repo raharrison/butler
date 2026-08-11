@@ -18,7 +18,8 @@ class RegistryValidatorTest {
 
     private static List<Diagnostic> check(String yaml) {
         ConfigLoader.Result r = ConfigLoader.parse(yaml);
-        ConfigValidator.validate(r.config(), r.diagnostics());
+        ConfigValidator.validate(r.config(), r.diagnostics(),
+                StepRegistry.discover().conditionParams());
         RegistryValidator.validate(r.config(), StepRegistry.discover(),
                 TriggerRegistry.discover(), r.diagnostics());
         return r.diagnostics().all();

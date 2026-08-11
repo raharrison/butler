@@ -1,0 +1,20 @@
+<!--
+  Logs go to stderr; stdout carries what a command was asked for (a plan, a run report, the
+  effective config). run_id, job and step come from the MDC the runner sets.
+
+  JSON output, selected by settings.log_format, arrives with daemon hardening in M5.
+-->
+<configuration>
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %X{run_id:-}%replace(%X{job:-}){'^(.+)$', ' $1'}%replace(%X{step:-}){'^(.+)$', '
+                [$1]'} %msg%n
+            </pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="STDERR"/>
+    </root>
+</configuration>

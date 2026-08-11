@@ -5,7 +5,9 @@ import net.ryanh.butler.config.Diagnostics;
 import net.ryanh.butler.config.Secrets;
 import net.ryanh.butler.config.model.ButlerConfig;
 import net.ryanh.butler.spi.Event;
+import net.ryanh.butler.spi.RunContext;
 import net.ryanh.butler.spi.StepResult;
+import net.ryanh.butler.testing.Fixture;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -22,11 +24,14 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ContextTest {
 
-    private static Context context(String yaml, Map<String, Object> facts) {
-        ConfigLoader.Result r = ConfigLoader.parse(yaml);
-        ButlerConfig config = r.config();
-        return Context.forPlan(config, config.jobs().get("j"),
-                new Event("manual", facts, null), Secrets.none());
+    @TempDir
+    Path stateDir;
+
+    private Context context(String yaml, Map<String, Object> facts) {
+        StepRegistry steps = StepRegistry.discover();
+        ConfigLoader.Result r = Fixture.config(yaml, steps);
+        return Context.forPlan(Fixture.environment(r, steps, stateDir),
+                r.config().jobs().get("j"), new Event("manual", facts, null), Map.of());
     }
 
     private static final String JOB = """
@@ -68,7 +73,7 @@ class ContextTest {
         Context ctx = context(JOB, Map.of("version", "1.2.4"));
         assertTrue(ctx.evaluate("semver(trigger.version) > semver(\"1.0.0\")"));
         assertEquals("semver(\"1.2.4\") > semver(\"1.0.0\")",
-                ctx.explain("semver(trigger.version) > semver(\"1.0.0\")"));
+                ctx.decide("semver(trigger.version) > semver(\"1.0.0\")").explained());
     }
 
     @Test
@@ -96,6 +101,31 @@ class ContextTest {
         assertEquals("<duration>", ctx.resolve("${run.duration}"));
         assertEquals("j", ctx.resolve("${run.job}"));
         assertTrue(ctx.dryRun());
+    }
+
+    @Test
+    @DisplayName("step-injected locals sit over the namespaces, and only for the view that has "
+            + "them")
+    void locals() {
+        Context ctx = context(JOB, Map.of());
+        RunContext scoped = ctx.withLocals(Map.of("status", 200L, "json",
+                Map.of("version", "1.2.4")));
+
+        assertTrue(scoped.evaluate("status == 200 and json.version == \"1.2.4\""));
+        assertEquals("/srv/apps/demo/releases", scoped.resolve("${vars.releases}"),
+                "the namespaces are still there underneath");
+        assertFalse(ctx.evaluate("exists(status)"), "and the run itself never saw them");
+    }
+
+    @Test
+    @DisplayName("what discovery observed joins state.*, where a job cannot tell it from what was "
+            + "persisted")
+    void discoveredState() {
+        Context ctx = context(JOB, Map.of());
+        ctx.observe("deployed_version", "1.2.3");
+
+        assertTrue(ctx.evaluate("state.deployed_version == \"1.2.3\""));
+        assertEquals(Map.of("deployed_version", "1.2.3"), ctx.state());
     }
 
     @Test

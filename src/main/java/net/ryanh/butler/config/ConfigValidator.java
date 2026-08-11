@@ -34,18 +34,18 @@ public final class ConfigValidator {
     private static final List<String> STEP_LOCALS =
             List.of("status", "headers", "body", "json", "value", "stdout", "stderr", "exit_code");
 
-    /**
-     * Step parameters holding a bare condition rather than a string template. Without this the
-     * text would be treated as a template, and one containing no {@code ${}} would never be
-     * parsed at all. The step registry supersedes this list once it can say which parameters a
-     * given step type treats as conditions.
-     */
-    private static final Set<String> CONDITION_PARAMS = Set.of("until");
-
     private ConfigValidator() {
     }
 
-    public static void validate(ButlerConfig config, Diagnostics diags) {
+    /**
+     * @param conditionParams step parameters holding a bare condition rather than a string
+     *                        template, such as {@code until:}. Without them such a value is treated
+     *                        as a template and one containing no {@code ${}} is never parsed at
+     *                        all. The set comes from {@code StepRegistry.conditionParams()}, passed
+     *                        in because {@code config} does not depend on the runtime.
+     */
+    public static void validate(ButlerConfig config, Diagnostics diags,
+                                Set<String> conditionParams) {
         if (config == null) {
             return;
         }
@@ -54,10 +54,11 @@ public final class ConfigValidator {
                 n.params().forEach((k, v) ->
                         checkTemplate(diags, n.path() + "/" + k, v, NAMESPACES)));
 
-        config.jobs().values().forEach(job -> job(config, job, diags));
+        config.jobs().values().forEach(job -> job(config, job, diags, conditionParams));
     }
 
-    private static void job(ButlerConfig config, JobDef job, Diagnostics diags) {
+    private static void job(ButlerConfig config, JobDef job, Diagnostics diags,
+                            Set<String> conditionParams) {
         job.vars().forEach((k, v) -> checkTemplate(diags, job.path() + "/vars/" + k, v, NAMESPACES));
         job.env().forEach((k, v) -> checkTemplate(diags, job.path() + "/env/" + k, v, NAMESPACES));
 
@@ -67,11 +68,11 @@ public final class ConfigValidator {
 
         checkCondition(diags, job.path() + "/when", job.when(), NAMESPACES);
 
-        checkSteps(job.discover(), diags, true);
-        checkSteps(job.steps(), diags, false);
-        checkSteps(job.onFailure(), diags, false);
-        checkSteps(job.onSuccess(), diags, false);
-        checkSteps(job.always(), diags, false);
+        checkSteps(job.discover(), diags, true, conditionParams);
+        checkSteps(job.steps(), diags, false, conditionParams);
+        checkSteps(job.onFailure(), diags, false, conditionParams);
+        checkSteps(job.onSuccess(), diags, false, conditionParams);
+        checkSteps(job.always(), diags, false, conditionParams);
 
         job.persist().forEach((k, v) ->
                 checkTemplate(diags, job.path() + "/persist/" + k, v, NAMESPACES));
@@ -87,11 +88,12 @@ public final class ConfigValidator {
                     checkTemplate(diags, job.path() + "/notify/" + k, v, NAMESPACES));
         }
 
-        checkRegisterNames(job, diags);
+        checkRegisterNames(job, diags, conditionParams);
         checkStateWithoutDiscover(job, diags);
     }
 
-    private static void checkSteps(List<StepDef> steps, Diagnostics diags, boolean isDiscover) {
+    private static void checkSteps(List<StepDef> steps, Diagnostics diags, boolean isDiscover,
+                                   Set<String> conditionParams) {
         List<String> allowed = new ArrayList<>(NAMESPACES);
         allowed.addAll(STEP_LOCALS);
 
@@ -103,7 +105,7 @@ public final class ConfigValidator {
                     checkTemplate(diags, step.path() + "/env/" + k, v, NAMESPACES));
 
             step.params().forEach((k, v) -> {
-                if (CONDITION_PARAMS.contains(k)) {
+                if (conditionParams.contains(k)) {
                     checkCondition(diags, step.path() + "/" + k, asText(v), allowed);
                 } else {
                     checkTemplate(diags, step.path() + "/" + k, v, allowed);
@@ -132,7 +134,8 @@ public final class ConfigValidator {
      * steps that have already run. Discovery runs before everything, so what it registers is
      * visible to the pipeline; hooks run after the pipeline and can see all of it.
      */
-    private static void checkRegisterNames(JobDef job, Diagnostics diags) {
+    private static void checkRegisterNames(JobDef job, Diagnostics diags,
+                                           Set<String> conditionParams) {
         Set<String> everyName = new LinkedHashSet<>();
         for (StepDef step : allSteps(job)) {
             if (step.register() != null) {
@@ -141,11 +144,13 @@ public final class ConfigValidator {
         }
 
         Set<String> declared = new LinkedHashSet<>();
-        Set<String> afterDiscover = checkSection(job.discover(), diags, Set.of(), declared, everyName);
-        Set<String> afterSteps = checkSection(job.steps(), diags, afterDiscover, declared, everyName);
-        checkSection(job.onFailure(), diags, afterSteps, declared, everyName);
-        checkSection(job.onSuccess(), diags, afterSteps, declared, everyName);
-        checkSection(job.always(), diags, afterSteps, declared, everyName);
+        Set<String> afterDiscover =
+                checkSection(job.discover(), diags, Set.of(), declared, everyName, conditionParams);
+        Set<String> afterSteps =
+                checkSection(job.steps(), diags, afterDiscover, declared, everyName, conditionParams);
+        checkSection(job.onFailure(), diags, afterSteps, declared, everyName, conditionParams);
+        checkSection(job.onSuccess(), diags, afterSteps, declared, everyName, conditionParams);
+        checkSection(job.always(), diags, afterSteps, declared, everyName, conditionParams);
     }
 
     private static List<StepDef> allSteps(JobDef job) {
@@ -166,11 +171,11 @@ public final class ConfigValidator {
      */
     private static Set<String> checkSection(List<StepDef> steps, Diagnostics diags,
                                             Set<String> available, Set<String> declared,
-                                            Set<String> everyName) {
+                                            Set<String> everyName, Set<String> conditionParams) {
         Set<String> visible = new LinkedHashSet<>(available);
 
         for (StepDef step : steps) {
-            for (String referenced : referencedSteps(step)) {
+            for (String referenced : referencedSteps(step, conditionParams)) {
                 if (visible.contains(referenced)) {
                     continue;
                 }
@@ -199,14 +204,14 @@ public final class ConfigValidator {
     /**
      * The {@code steps.<name>} references a step makes, across all its expressions.
      */
-    private static Set<String> referencedSteps(StepDef step) {
+    private static Set<String> referencedSteps(StepDef step, Set<String> conditionParams) {
         Set<String> out = new LinkedHashSet<>();
 
         collectStepRefs(parseQuietly(step.when()), out);
         step.extract().values().forEach(v -> collectStepRefs(parseQuietly(v), out));
 
         step.params().forEach((k, v) -> {
-            if (CONDITION_PARAMS.contains(k)) {
+            if (conditionParams.contains(k)) {
                 collectStepRefs(parseQuietly(asText(v)), out);
             } else {
                 collectStepRefsFromValue(v, out);

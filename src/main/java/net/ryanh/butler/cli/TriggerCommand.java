@@ -1,9 +1,7 @@
 package net.ryanh.butler.cli;
 
 import net.ryanh.butler.config.model.JobDef;
-import net.ryanh.butler.runtime.Plan;
-import net.ryanh.butler.runtime.PlanBuilder;
-import net.ryanh.butler.runtime.PlanRenderer;
+import net.ryanh.butler.runtime.*;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.util.Suggestions;
 import picocli.CommandLine.Command;
@@ -11,12 +9,11 @@ import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Callable;
 
 /**
- * Runs one job once, against the facts its trigger would have supplied.
+ * Runs one job once, against the facts its triggers would have supplied.
  *
  * <p>With {@code --dry-run} it renders the plan instead, which together with {@code butler check}
  * is the authoring loop: change the config, read the plan, change it again.
@@ -24,9 +21,9 @@ import java.util.concurrent.Callable;
 @Command(
         name = "trigger",
         header = "Run a job once, or with --dry-run report what it would do.",
-        description = "Facts come from --set. Evaluating the job's own configured triggers to "
-                + "build a realistic event needs the file and schedule triggers, which arrive in "
-                + "M4.",
+        description = "Facts come from the job's own triggers, with --set overriding or supplying "
+                + "them. A dry run resolves everything and changes nothing, except that discover: "
+                + "steps run for real.",
         mixinStandardHelpOptions = true)
 public final class TriggerCommand implements Callable<Integer> {
 
@@ -61,14 +58,16 @@ public final class TriggerCommand implements Callable<Integer> {
             return ButlerCommand.EXIT_FAILURE;
         }
 
+        RunEnvironment env = configOptions.environment();
+        Event event = Events.forJob(result.config(), definition, configOptions.triggers(), facts);
+
         if (!configOptions.dryRun()) {
-            System.err.println("running a job for real is not implemented yet (milestone M3)");
-            System.err.println("try: butler trigger " + job + " --dry-run");
-            return ButlerCommand.EXIT_FAILURE;
+            Run run = new JobRunner(env).run(definition, event);
+            System.out.print(RunRenderer.render(run));
+            return run.ok() ? ButlerCommand.EXIT_OK : ButlerCommand.EXIT_FAILURE;
         }
 
-        Plan plan = PlanBuilder.build(result.config(), definition, event(definition),
-                configOptions.steps(), diags);
+        Plan plan = PlanBuilder.build(env, definition, event, diags);
         System.out.print(PlanRenderer.render(plan));
 
         // Printed first: a plan with the bad step marked says more than the error alone.
@@ -77,14 +76,5 @@ public final class TriggerCommand implements Callable<Integer> {
             return ButlerCommand.EXIT_FAILURE;
         }
         return ButlerCommand.EXIT_OK;
-    }
-
-    /**
-     * The event the job's first trigger would produce, as far as {@code --set} describes it. It
-     * carries no dedupe key: a run asked for by hand is never suppressed as already done.
-     */
-    private Event event(JobDef definition) {
-        String trigger = definition.on().isEmpty() ? "manual" : definition.on().getFirst().uses();
-        return new Event(trigger, new LinkedHashMap<>(facts), null);
     }
 }

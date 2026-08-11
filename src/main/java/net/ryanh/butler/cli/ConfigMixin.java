@@ -3,6 +3,7 @@ package net.ryanh.butler.cli;
 import net.ryanh.butler.config.ConfigLoader;
 import net.ryanh.butler.config.ConfigValidator;
 import net.ryanh.butler.runtime.RegistryValidator;
+import net.ryanh.butler.runtime.RunEnvironment;
 import net.ryanh.butler.runtime.StepRegistry;
 import net.ryanh.butler.runtime.TriggerRegistry;
 import picocli.CommandLine.Option;
@@ -19,6 +20,7 @@ public final class ConfigMixin {
 
     private StepRegistry steps;
     private TriggerRegistry triggers;
+    private RunEnvironment environment;
 
     @Option(names = {"-c", "--config"},
             paramLabel = "<file>",
@@ -59,6 +61,18 @@ public final class ConfigMixin {
     }
 
     /**
+     * What a run needs from outside itself, for the config just loaded. Built during
+     * {@link #loadAndValidate}, so a secrets file that cannot be read is one of the errors a
+     * command reports rather than something a run discovers by resolving every secret to null.
+     */
+    public RunEnvironment environment() {
+        if (environment == null) {
+            throw new IllegalStateException("the config has not been loaded yet");
+        }
+        return environment;
+    }
+
+    /**
      * Loads and fully validates, without reporting. Returns whatever could be built.
      *
      * <p>Validation is both passes: structure and expressions, then everything that needs the
@@ -77,8 +91,12 @@ public final class ConfigMixin {
         } catch (IOException e) {
             throw new UncheckedIOException("could not read " + config, e);
         }
-        ConfigValidator.validate(result.config(), result.diagnostics());
+        ConfigValidator.validate(result.config(), result.diagnostics(),
+                steps().conditionParams());
         RegistryValidator.validate(result.config(), steps(), triggers(), result.diagnostics());
+        if (result.config() != null) {
+            environment = RunEnvironment.of(result.config(), steps(), result.diagnostics());
+        }
         return result;
     }
 }

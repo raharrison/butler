@@ -65,13 +65,13 @@ public final class Cursor {
     public String requiredString(String key) {
         Object v = raw(key);
         if (v == null) {
-            diags.error(path.isEmpty() ? "" : path, "missing required key \"" + key + "\"");
+            diags.error(path, "missing required key \"" + key + "\"");
             return null;
         }
         return string(key, null);
     }
 
-    public Integer integer(String key, Integer fallback) {
+    public int integer(String key, int fallback) {
         Object v = raw(key);
         if (v == null) {
             return fallback;

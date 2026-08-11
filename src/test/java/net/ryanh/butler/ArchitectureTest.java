@@ -64,6 +64,24 @@ class ArchitectureTest {
     }
 
     @Test
+    @DisplayName("config knows nothing of the runtime, the SPI or any step")
+    void configStaysBelowTheRuntime() {
+        check(noClasses().that().resideInAPackage(CONFIG)
+                .should().dependOnClassesThat().resideInAnyPackage(CLI, RUNTIME, SPI, STEP, TRIGGER));
+    }
+
+    /**
+     * {@code Main} is the one thing above the CLI, and only to hand picocli the top-level command.
+     */
+    @Test
+    @DisplayName("nothing below the cli depends on it")
+    void nothingDependsOnTheCli() {
+        check(noClasses().that()
+                .resideInAnyPackage(CONFIG, EXPR, RUNTIME, SPI, STEP, TRIGGER, UTIL)
+                .should().dependOnClassesThat().resideInAPackage(CLI));
+    }
+
+    @Test
     @DisplayName("expr and util stay below config and the runtime")
     void languageLayersStayLow() {
         check(noClasses().that().resideInAPackage(UTIL)

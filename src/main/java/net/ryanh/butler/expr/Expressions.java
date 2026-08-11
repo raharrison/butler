@@ -137,7 +137,9 @@ public final class Expressions {
         int i = start + 1;
         while (i < s.length()) {
             char c = s.charAt(i);
-            if (c == '\\') {
+            // Only a double-quoted string takes escapes, so a raw string ending in a backslash
+            // still finds its closing quote.
+            if (c == '\\' && quote == '"') {
                 i += 2;
                 continue;
             }

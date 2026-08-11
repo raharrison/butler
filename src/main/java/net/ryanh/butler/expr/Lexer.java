@@ -122,6 +122,10 @@ final class Lexer {
         throw new ExprException("unexpected character '" + c + "'");
     }
 
+    /**
+     * A double-quoted string takes escapes; a single-quoted one is raw, as in YAML, which is what
+     * keeps a regex readable: {@code match(stdout, 'v?(\d+\.\d+\.\d+)', 1)}.
+     */
     private Token string(char quote) {
         i++; // opening quote
         StringBuilder sb = new StringBuilder();
@@ -134,7 +138,7 @@ final class Lexer {
                 i++;
                 return new Token(Token.Kind.STRING, sb.toString(), sb.toString());
             }
-            if (c == '\\' && i + 1 < src.length()) {
+            if (quote == '"' && c == '\\' && i + 1 < src.length()) {
                 char esc = src.charAt(i + 1);
                 sb.append(switch (esc) {
                     case 'n' -> '\n';

@@ -1,5 +1,6 @@
 package net.ryanh.butler.util;
 
+import java.nio.file.Path;
 import java.time.Duration;
 
 /**
@@ -19,7 +20,16 @@ public final class Literals {
             case null -> "null";
             case String s -> "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
             case Duration d -> Durations.format(d);
+            case Path p -> path(p);
             default -> String.valueOf(value);
         };
+    }
+
+    /**
+     * A path as the config wrote it. Butler runs on Linux hosts, so a path shown to the author
+     * reads with forward slashes whatever separator the machine rendering it prefers.
+     */
+    public static String path(Path p) {
+        return p.toString().replace('\\', '/');
     }
 }
