@@ -1,8 +1,11 @@
 package net.ryanh.butler.runtime;
 
+import net.ryanh.butler.config.Vocabulary;
+import net.ryanh.butler.config.model.StepDef;
 import net.ryanh.butler.spi.StepType;
 
 import java.util.*;
+import java.util.function.Function;
 
 /**
  * Every step type the daemon can run, keyed by {@link StepType#name()}.
@@ -47,6 +50,15 @@ public final class StepRegistry {
                         + "\" must use a record for its parameters, found "
                         + type.configType().getName());
             }
+            // The loader lifts reserved keys out before a step sees its parameters, so a component
+            // named after one would be listed by `butler steps` and never receive a value.
+            for (String param : Params.names(type.configType())) {
+                if (StepDef.RESERVED.contains(param)) {
+                    throw new IllegalStateException("step type \"" + type.name()
+                            + "\" has a parameter named \"" + param
+                            + "\", which is a reserved step key and never reaches the step");
+                }
+            }
         }
         return new StepRegistry(byName);
     }
@@ -63,16 +75,14 @@ public final class StepRegistry {
     }
 
     /**
-     * Every parameter name some registered step reads as a condition rather than as a string
-     * template. The union across step types, because the config validator checks expressions
-     * before anything has resolved a {@code uses:} to a type.
+     * This registry as the step half of the seam {@code ConfigValidator} takes.
      */
-    public Set<String> conditionParams() {
-        Set<String> out = new LinkedHashSet<>();
-        for (StepType<?> type : byName.values()) {
-            out.addAll(type.conditions());
-        }
-        return Collections.unmodifiableSet(out);
+    public Function<String, Vocabulary.Facts> vocabulary() {
+        return uses -> {
+            StepType<?> type = byName.get(uses);
+            return type == null ? null
+                    : new Vocabulary.Facts(type.conditions(), type.locals());
+        };
     }
 
     public Collection<StepType<?>> all() {

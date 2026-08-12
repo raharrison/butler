@@ -1,5 +1,5 @@
-# The config the rendered plan is snapshot-tested against. It uses the step vocabulary that
-# exists today; the canonical config's fs, systemd and http steps arrive with M4.
+# The config the rendered plan is snapshot-tested against. It uses control.* only: every other
+# namespace describes absolute paths and live hosts, and asserts its own describe() in its own test.
 version: 1
 
 vars:

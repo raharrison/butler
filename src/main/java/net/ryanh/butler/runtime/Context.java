@@ -4,10 +4,7 @@ import net.ryanh.butler.config.model.JobDef;
 import net.ryanh.butler.expr.Evaluator;
 import net.ryanh.butler.expr.Expressions;
 import net.ryanh.butler.expr.Scope;
-import net.ryanh.butler.spi.Event;
-import net.ryanh.butler.spi.ProcessRunner;
-import net.ryanh.butler.spi.RunContext;
-import net.ryanh.butler.spi.StepResult;
+import net.ryanh.butler.spi.*;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -36,18 +33,18 @@ public final class Context implements RunContext {
     private final Map<String, Object> state;
     private final Map<String, Object> run;
     private final boolean dryRun;
-    private final ProcessRunner processes;
+    private final RunEnvironment env;
     private final ProcessRunner.Command command;
     private final Evaluator evaluator;
 
-    private Context(boolean dryRun, ProcessRunner processes) {
+    private Context(boolean dryRun, RunEnvironment env) {
         this.namespaces = new LinkedHashMap<>();
         this.vars = new LinkedHashMap<>();
         this.steps = new LinkedHashMap<>();
         this.state = new LinkedHashMap<>();
         this.run = new LinkedHashMap<>();
         this.dryRun = dryRun;
-        this.processes = processes;
+        this.env = env;
         this.command = ProcessRunner.Command.none();
         // Reads the live map, so a result registered mid-run is visible to the next step.
         this.evaluator = new Evaluator(namespaces::get);
@@ -63,7 +60,7 @@ public final class Context implements RunContext {
         this.state = base.state;
         this.run = base.run;
         this.dryRun = base.dryRun;
-        this.processes = base.processes;
+        this.env = base.env;
         this.command = command;
         this.evaluator = new Evaluator(scope);
     }
@@ -104,7 +101,7 @@ public final class Context implements RunContext {
 
     private static Context base(RunEnvironment env, JobDef job, Event event,
                                 Map<String, Object> persisted, boolean dryRun) {
-        Context ctx = new Context(dryRun, env.processes());
+        Context ctx = new Context(dryRun, env);
 
         ctx.namespaces.put("vars", ctx.vars);
         ctx.namespaces.put("trigger", event.facts());
@@ -166,13 +163,24 @@ public final class Context implements RunContext {
     }
 
     @Override
+    public String resolveCondition(String condition) {
+        return Expressions.template(condition).renderLiterals(evaluator);
+    }
+
+    @Override
     public Context withLocals(Map<String, Object> locals) {
         return new Context(this, Scope.of(namespaces).with(locals), command);
     }
 
     @Override
     public ProcessRunner processes() {
-        return processes;
+        return env.processes();
+    }
+
+    @Override
+    public Notifications notifications() {
+        return (to, message) ->
+                Notifiers.send(env.config().notifiers(), env.notifiers(), to, message, this);
     }
 
     @Override

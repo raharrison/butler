@@ -1,6 +1,7 @@
 package net.ryanh.butler.config.model;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -26,6 +27,14 @@ public record StepDef(
         Map<String, String> extract,
         Map<String, Object> params,
         String path) {
+
+    /**
+     * The keys the loader lifts into the typed fields above, and which a step type may therefore
+     * never name a parameter (DESIGN.md §3.1). {@code StepRegistry} refuses one at startup.
+     */
+    public static final List<String> RESERVED =
+            List.of("name", "uses", "when", "register", "timeout", "retry", "continue_on_error",
+                    "env", "working_dir", "run_as", "extract");
 
     /**
      * Label for logs and dry-run output: the author's name if given, else the step type.

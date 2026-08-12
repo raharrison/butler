@@ -26,7 +26,8 @@ class RegistryTest {
             assertNotNull(StepRegistry.discover().find("control.log"));
             assertNotNull(StepRegistry.discover().find("control.set"));
             assertNotNull(TriggerRegistry.discover().find("manual"));
-            assertNull(StepRegistry.discover().find("fs.copy"));
+            assertNotNull(StepRegistry.discover().find("fs.copy"));
+            assertNull(StepRegistry.discover().find("docker.compose"));
         }
 
         @Test
@@ -43,6 +44,16 @@ class RegistryTest {
             var e = assertThrows(IllegalStateException.class,
                     () -> StepRegistry.of(new NotARecord()));
             assertTrue(e.getMessage().contains("must use a record"), e.getMessage());
+        }
+
+        @Test
+        @DisplayName("a parameter named after a reserved step key is a startup error, since it "
+                + "would be listed by butler steps and never receive a value")
+        void reservedParameterNamesAreRefused() {
+            var e = assertThrows(IllegalStateException.class,
+                    () -> StepRegistry.of(new Reserving()));
+            assertTrue(e.getMessage().contains("\"working_dir\""), e.getMessage());
+            assertTrue(e.getMessage().contains("reserved step key"), e.getMessage());
         }
     }
 
@@ -128,6 +139,36 @@ class RegistryTest {
 
         @Override
         public String describe(Empty config, RunContext ctx) {
+            return "would do nothing";
+        }
+    }
+
+    /**
+     * A step that names one of its parameters after a reserved key, which the loader lifts out
+     * before the step ever sees it.
+     */
+    private static final class Reserving implements StepType<Reserving.Config> {
+
+        record Config(String unit, String workingDir) {
+        }
+
+        @Override
+        public String name() {
+            return "test.reserving";
+        }
+
+        @Override
+        public Class<Config> configType() {
+            return Config.class;
+        }
+
+        @Override
+        public StepResult execute(Config config, RunContext ctx) {
+            return StepResult.ok();
+        }
+
+        @Override
+        public String describe(Config config, RunContext ctx) {
             return "would do nothing";
         }
     }

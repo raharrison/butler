@@ -2,10 +2,8 @@ package net.ryanh.butler.cli;
 
 import net.ryanh.butler.config.ConfigLoader;
 import net.ryanh.butler.config.ConfigValidator;
-import net.ryanh.butler.runtime.RegistryValidator;
-import net.ryanh.butler.runtime.RunEnvironment;
-import net.ryanh.butler.runtime.StepRegistry;
-import net.ryanh.butler.runtime.TriggerRegistry;
+import net.ryanh.butler.config.Vocabulary;
+import net.ryanh.butler.runtime.*;
 import picocli.CommandLine.Option;
 
 import java.io.IOException;
@@ -20,6 +18,7 @@ public final class ConfigMixin {
 
     private StepRegistry steps;
     private TriggerRegistry triggers;
+    private NotifierRegistry notifiers;
     private RunEnvironment environment;
 
     @Option(names = {"-c", "--config"},
@@ -61,6 +60,16 @@ public final class ConfigMixin {
     }
 
     /**
+     * The notification channels this build can send through. Loaded once per command.
+     */
+    public NotifierRegistry notifiers() {
+        if (notifiers == null) {
+            notifiers = NotifierRegistry.discover();
+        }
+        return notifiers;
+    }
+
+    /**
      * What a run needs from outside itself, for the config just loaded. Built during
      * {@link #loadAndValidate}, so a secrets file that cannot be read is one of the errors a
      * command reports rather than something a run discovers by resolving every secret to null.
@@ -92,10 +101,12 @@ public final class ConfigMixin {
             throw new UncheckedIOException("could not read " + config, e);
         }
         ConfigValidator.validate(result.config(), result.diagnostics(),
-                steps().conditionParams());
-        RegistryValidator.validate(result.config(), steps(), triggers(), result.diagnostics());
+                Vocabulary.of(steps().vocabulary(), triggers().vocabulary()));
+        RegistryValidator.validate(result.config(), steps(), triggers(), notifiers(),
+                result.diagnostics());
         if (result.config() != null) {
-            environment = RunEnvironment.of(result.config(), steps(), result.diagnostics());
+            environment = RunEnvironment.of(result.config(), steps(), notifiers(),
+                    result.diagnostics());
         }
         return result;
     }

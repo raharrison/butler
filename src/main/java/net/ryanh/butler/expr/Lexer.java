@@ -186,8 +186,6 @@ final class Lexer {
             }
         }
         String text = src.substring(start, i);
-        // An if/else, not a ternary: a ternary over Double and Long applies binary numeric
-        // promotion and boxes both branches as Double.
         Object value;
         if (isDouble) {
             value = Double.valueOf(text);

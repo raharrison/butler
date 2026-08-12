@@ -3,6 +3,7 @@ package net.ryanh.butler.runtime;
 import net.ryanh.butler.config.ConfigLoader;
 import net.ryanh.butler.config.ConfigValidator;
 import net.ryanh.butler.config.Diagnostic;
+import net.ryanh.butler.config.Vocabulary;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -18,10 +19,10 @@ class RegistryValidatorTest {
 
     private static List<Diagnostic> check(String yaml) {
         ConfigLoader.Result r = ConfigLoader.parse(yaml);
-        ConfigValidator.validate(r.config(), r.diagnostics(),
-                StepRegistry.discover().conditionParams());
+        ConfigValidator.validate(r.config(), r.diagnostics(), Vocabulary.of(
+                StepRegistry.discover().vocabulary(), TriggerRegistry.discover().vocabulary()));
         RegistryValidator.validate(r.config(), StepRegistry.discover(),
-                TriggerRegistry.discover(), r.diagnostics());
+                TriggerRegistry.discover(), NotifierRegistry.discover(), r.diagnostics());
         return r.diagnostics().all();
     }
 
@@ -54,9 +55,10 @@ class RegistryValidatorTest {
                 jobs:
                   j:
                     on: [{uses: manual}]
-                    steps: [{uses: fs.copy}]
+                    steps: [{uses: docker.compose}]
                 """);
-        assertTrue(d.message().contains("registered: control.log, control.set"), d.message());
+        assertTrue(d.message().contains("unknown step type \"docker.compose\""), d.message());
+        assertTrue(d.message().contains("registered: control.log"), d.message());
     }
 
     @Test
@@ -65,10 +67,28 @@ class RegistryValidatorTest {
         Diagnostic d = only("""
                 jobs:
                   j:
-                    on: [{uses: file.appeared, dir: /srv}]
+                    on: [{uses: docker.image, repo: nginx}]
                     steps: [{uses: control.log}]
                 """);
-        assertTrue(d.message().contains("unknown trigger type \"file.appeared\""), d.message());
+        assertTrue(d.message().contains("unknown trigger type \"docker.image\""), d.message());
+    }
+
+    @Test
+    @DisplayName("a regex that will not compile is caught here, not by a watcher that dies at "
+            + "startup")
+    void aBadMatchRegexIsCaught() {
+        Diagnostic d = only("""
+                jobs:
+                  j:
+                    on:
+                      - uses: file.appeared
+                        dir: /srv/artifacts
+                        match: 'api-(?<version>.jar'
+                    steps: [{uses: control.log}]
+                """);
+        assertTrue(d.message().contains("is not a usable regular expression"), d.message());
+        assertTrue(d.message().contains("Unclosed group"), d.message());
+        assertEquals(4, d.loc().line(), d.message());
     }
 
     @Test

@@ -1,1 +1,5 @@
 net.ryanh.butler.trigger.manual.ManualTrigger
+net.ryanh.butler.trigger.file.AppearedTrigger
+net.ryanh.butler.trigger.file.ChangedTrigger
+net.ryanh.butler.trigger.schedule.EveryTrigger
+net.ryanh.butler.trigger.schedule.CronTrigger

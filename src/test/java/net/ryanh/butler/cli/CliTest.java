@@ -78,16 +78,11 @@ class CliTest {
         }
 
         @Test
-        @DisplayName("the canonical config names the step types this build cannot run")
-        void reportsStepTypesThatDoNotExistYet() throws IOException {
-            // The acceptance config is written against the full v1 vocabulary, which arrives with
-            // the fs, systemd and http steps. Until then validate says so, per step, with a line.
+        @DisplayName("the canonical config validates clean")
+        void theAcceptanceConfigPasses() throws IOException {
             int code = Main.run("validate", "-c", fixture("canonical.yaml").toString());
-            assertEquals(1, code);
-            String out = stderr();
-            assertTrue(out.contains("unknown step type \"fs.copy\""), out);
-            assertTrue(out.contains("unknown trigger type \"file.appeared\""), out);
-            assertTrue(out.contains("canonical.yaml:65:9"), out);
+            assertEquals(0, code, stderr());
+            assertEquals("", stderr(), "zero errors and zero warnings, both");
         }
 
         @Test

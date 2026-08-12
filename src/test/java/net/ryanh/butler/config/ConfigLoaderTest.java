@@ -4,6 +4,7 @@ import net.ryanh.butler.config.model.Enums;
 import net.ryanh.butler.config.model.JobDef;
 import net.ryanh.butler.config.model.StepDef;
 import net.ryanh.butler.runtime.StepRegistry;
+import net.ryanh.butler.runtime.TriggerRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -28,8 +29,8 @@ class ConfigLoaderTest {
 
     static ConfigLoader.Result loadAndValidate(String yaml) {
         ConfigLoader.Result r = ConfigLoader.parse(yaml);
-        ConfigValidator.validate(r.config(), r.diagnostics(),
-                StepRegistry.discover().conditionParams());
+        ConfigValidator.validate(r.config(), r.diagnostics(), Vocabulary.of(
+                StepRegistry.discover().vocabulary(), TriggerRegistry.discover().vocabulary()));
         return r;
     }
 

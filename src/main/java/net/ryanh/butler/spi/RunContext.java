@@ -35,6 +35,15 @@ public interface RunContext {
     boolean evaluate(String condition);
 
     /**
+     * A condition with its {@code ${...}} holes replaced by the literals they resolve to.
+     *
+     * <p>For {@code describe()}: a condition is parsed rather than interpolated, so it is the one
+     * parameter still holding a hole when a step is asked to explain itself, and a dry run may not
+     * show one.
+     */
+    String resolveCondition(String condition);
+
+    /**
      * A view of this context with step-injected locals layered over the namespaces, winning where a
      * name collides. This is what {@code http.wait}'s {@code until:} sees its probe through and what
      * {@code extract:} evaluates against (DESIGN.md §4).
@@ -45,6 +54,11 @@ public interface RunContext {
      * How this step starts a process.
      */
     ProcessRunner processes();
+
+    /**
+     * How this step sends through a channel declared under {@code notifiers:}.
+     */
+    Notifications notifications();
 
     /**
      * This step's process settings as a command with no argv yet: {@code working_dir}, its

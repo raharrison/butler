@@ -114,6 +114,23 @@ class PlanTest {
         }
 
         @Test
+        @DisplayName("a when nobody could evaluate is not a when that came out false")
+        void whenUnevaluableSaysSo() {
+            Built built = build("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        when: trigger.a < state.missing
+                        steps: [{uses: control.log, message: go}]
+                    """, "j", StepRegistry.discover(), Map.of("a", "1"));
+
+            String out = built.rendered();
+            assertTrue(out.contains("could not be evaluated"), out);
+            assertTrue(out.contains("not shown: the job's when could not be evaluated"), out);
+            assertFalse(out.contains("when is false"), out);
+        }
+
+        @Test
         @DisplayName("keeps what discover observed even when the job's when is false, since it is "
                 + "still true of this host")
         void discoverFindingsSurviveASkippedRun() {

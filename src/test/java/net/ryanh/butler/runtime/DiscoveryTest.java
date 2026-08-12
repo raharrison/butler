@@ -175,6 +175,45 @@ class DiscoveryTest {
     }
 
     @Test
+    @DisplayName("the job's timeout bounds discovery as well, so an untimed probe cannot hang a run")
+    void theJobTimeoutBoundsDiscovery() {
+        processes.replying(c -> {
+            try {
+                Thread.sleep(Duration.ofSeconds(30));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new ProcessRunner.Completed(0, "", "", Duration.ZERO, true);
+        });
+
+        ConfigLoader.Result config = config("""
+                jobs:
+                  j:
+                    on: [{uses: manual}]
+                    timeout: 200ms
+                    discover:
+                      - name: Ask the host
+                        uses: shell.run
+                        script: cat VERSION
+                        extract:
+                          deployed_version: trim(stdout)
+                    steps:
+                      - name: Deploy
+                        uses: control.log
+                        message: deploying
+                """);
+        Instant started = Instant.now();
+        Run run = new JobRunner(environment(config)).run(config.config().jobs().get("j"),
+                new Event("manual", Map.of(), null));
+
+        assertEquals(Run.Status.FAILED, run.status());
+        assertEquals("the job's timeout of 200ms was exceeded", run.message());
+        assertTrue(Duration.between(started, Instant.now()).compareTo(Duration.ofSeconds(10)) < 0,
+                "the run outlived its deadline waiting for a discovery step with no timeout of its "
+                        + "own");
+    }
+
+    @Test
     @DisplayName("what the host says beats what was persisted")
     void discoveredValuesOverlayPersistedOnes() throws IOException {
         persisted("j", Map.of("deployed_version", "1.0.0"));

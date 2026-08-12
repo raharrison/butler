@@ -8,6 +8,8 @@ import net.ryanh.butler.util.Literals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -31,13 +33,15 @@ final class Discovery {
     /**
      * Runs the block, overlaying what it observed onto {@code ctx}'s {@code state.*}.
      *
+     * @param deadline when the job's time runs out, or null. A discovery step is a step for that
+     *                 purpose (DESIGN.md §5.1)
      * @return one entry per declared step, in source order, for the report and the run record
      */
-    static List<Plan.Entry> run(JobDef job, StepRegistry registry, Context ctx) {
+    static List<Plan.Entry> run(JobDef job, StepRegistry registry, Context ctx, Instant deadline) {
         List<Plan.Entry> entries = new ArrayList<>();
         int number = 0;
         for (StepDef def : job.discover()) {
-            Plan.Entry entry = one(def, job, registry, ctx, number + 1);
+            Plan.Entry entry = one(def, job, registry, ctx, number + 1, deadline);
             if (entry.number() > 0) {
                 number++;
             }
@@ -47,9 +51,9 @@ final class Discovery {
     }
 
     private static Plan.Entry one(StepDef def, JobDef job, StepRegistry registry, Context ctx,
-                                  int number) {
-        StepResolver.Resolved resolved = StepResolver.resolve(def, job, registry, ctx,
-                def.timeout());
+                                  int number, Instant deadline) {
+        Duration budget = StepExecution.budget(def.timeout(), deadline);
+        StepResolver.Resolved resolved = StepResolver.resolve(def, job, registry, ctx, budget);
         switch (resolved) {
             case StepResolver.Skipped skipped -> {
                 return Plan.Entry.skipped("discover", def.label(), def.uses(), skipped.reason());
@@ -59,7 +63,7 @@ final class Discovery {
                 return Plan.Entry.failed("discover", def.label(), def.uses(), bad.problem());
             }
             case StepResolver.Ready ready -> {
-                StepResult result = StepExecution.once(ready, def.timeout()).result();
+                StepResult result = StepExecution.once(ready, budget).result();
                 StepResolver.record(def, result, ctx);
 
                 if (result.isFailed()) {

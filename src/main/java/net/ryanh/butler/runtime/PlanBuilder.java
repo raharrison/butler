@@ -8,6 +8,7 @@ import net.ryanh.butler.expr.ExprException;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.spi.StepResult;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,7 +34,9 @@ public final class PlanBuilder {
         StateStore.JobState persisted = env.state().read(job.name());
         Context ctx = Context.forPlan(env, job, event, persisted.values());
 
-        List<Plan.Entry> discover = Discovery.run(job, env.steps(), ctx);
+        // Discovery runs for real, so it is held to the deadline the run would hold it to.
+        Instant deadline = job.timeout() == null ? null : Instant.now().plus(job.timeout());
+        List<Plan.Entry> discover = Discovery.run(job, env.steps(), ctx, deadline);
         Plan.Decision when = decide(job, ctx, diags);
 
         boolean wouldRun = when == null || when.result();

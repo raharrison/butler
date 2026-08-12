@@ -281,14 +281,60 @@ class DiagnosticsTest {
         }
 
         @Test
+        @DisplayName("a step's condition parameter sees the locals that step injects")
         void stepLocalsAreAllowedInConditionParameters() {
             var r = loadAndValidate("""
                     jobs:
                       j:
                         on: [{uses: manual}]
                         steps:
+                          - uses: http.wait
+                            url: http://localhost:8080/health
+                            until: status == 200 and json.version == "1.0.0"
+                    """);
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+        }
+
+        @Test
+        @DisplayName("but only that step's: control.assert injects nothing, so a probe's locals "
+                + "would be null at runtime")
+        void anotherStepsLocalsAreNot() {
+            var d = only("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
                           - uses: control.assert
-                            that: status == 200 and json.version == "1.0.0"
+                            that: json.version == "1.0.0"
+                    """);
+            assertAt(d, 6, "unknown namespace \"json\"");
+        }
+
+        @Test
+        @DisplayName("a template parameter never sees locals, whichever step it belongs to")
+        void localsAreNotInScopeForTemplates() {
+            var d = only("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                            message: ${json.version}
+                    """);
+            assertAt(d, 6, "unknown namespace \"json\"");
+        }
+
+        @Test
+        @DisplayName("an unrecognised uses: is reported once, without a second message about the "
+                + "expressions nobody can judge")
+        void anUnknownStepTypeSaysNothingAboutLocals() {
+            var r = loadAndValidate("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: nosuch.step
+                            message: ${json.version}
                     """);
             assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
         }
@@ -317,6 +363,61 @@ class DiagnosticsTest {
                     """);
             assertAt(d, 4, "unknown function \"semvar\"");
             assertTrue(d.message().contains("semver"), d.message());
+        }
+    }
+
+    @Nested
+    @DisplayName("trigger parameters")
+    class TriggerParameters {
+
+        @Test
+        @DisplayName("an order_by that will not parse is caught before the daemon starts")
+        void aBadOrderByIsAnError() {
+            //       1  2  3   4        5     6
+            var d = only("""
+                    jobs:
+                      j:
+                        on:
+                          - uses: file.appeared
+                            dir: /srv/artifacts
+                            order_by: semver(version
+                        steps: [{uses: control.log}]
+                    """);
+            assertAt(d, 6, 9, "invalid condition");
+        }
+
+        @Test
+        @DisplayName("what an order_by may reference is the trigger's own captures, so its roots "
+                + "are not judged")
+        void anOrderBySeesWhateverTheRegexCaptured() {
+            var r = loadAndValidate("""
+                    jobs:
+                      j:
+                        on:
+                          - uses: file.appeared
+                            dir: /srv/artifacts
+                            match: 'api-(?<version>\\d+)\\.jar'
+                            order_by: semver(version)
+                        steps: [{uses: control.log}]
+                    """);
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+        }
+
+        @Test
+        @DisplayName("a trigger parameter cannot be templated, because there is no run to resolve "
+                + "it against")
+        void aTemplatedTriggerParameterIsAnError() {
+            var d = only("""
+                    vars:
+                      artifacts: /srv/artifacts
+                    jobs:
+                      j:
+                        on:
+                          - uses: file.appeared
+                            dir: ${vars.artifacts}
+                        steps: [{uses: control.log}]
+                    """);
+            assertAt(d, 7, 9, "would be taken literally");
         }
     }
 
@@ -567,6 +668,22 @@ class DiagnosticsTest {
                     """);
             assertTrue(d.message().contains("no notifier named \"opps\""), d.message());
             assertTrue(d.message().contains("ops"), d.message());
+        }
+
+        @Test
+        @DisplayName("a notify block with no to: is a missing required key, reported once")
+        void notifyNeedsATo() {
+            //       1  2  3   4                     5      6      7
+            var d = only("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                        notify:
+                          on: [failure]
+                          failure: it broke
+                    """);
+            assertAt(d, 5, 5, "missing required key \"to\"");
         }
     }
 

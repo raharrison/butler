@@ -1,0 +1,216 @@
+package net.ryanh.butler.runtime;
+
+import net.ryanh.butler.config.ConfigLoader;
+import net.ryanh.butler.testing.Fixture;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * The daemon loop: starting watchers, bounding runs and stopping cleanly.
+ */
+class ButlerTest {
+
+    @TempDir
+    Path root;
+
+    private final ByteArrayOutputStream printed = new ByteArrayOutputStream();
+
+    private static void eventually(String what, BooleanSupplier done) throws InterruptedException {
+        Instant deadline = Instant.now().plusSeconds(10);
+        while (Instant.now().isBefore(deadline)) {
+            if (done.getAsBoolean()) {
+                return;
+            }
+            Thread.sleep(20);
+        }
+        fail("timed out waiting for " + what);
+    }
+
+    private Butler butler(String yaml, boolean dryRun) {
+        ConfigLoader.Result result = Fixture.config(yaml, StepRegistry.discover());
+        assertFalse(result.diagnostics().hasErrors(), result.diagnostics().render("test.yaml"));
+        return new Butler(
+                Fixture.environment(result, StepRegistry.discover(), root.resolve("state")),
+                TriggerRegistry.discover(), dryRun,
+                new PrintStream(printed, true, StandardCharsets.UTF_8));
+    }
+
+    private String config(Path watched, String steps) {
+        return """
+                settings:
+                  state_dir: %s
+                  poll_interval: 30ms
+                jobs:
+                  j:
+                    on:
+                      - uses: file.appeared
+                        dir: %s
+                        settle: 50ms
+                        on_startup: all
+                    steps:
+                %s
+                """.formatted(root.resolve("state").toString().replace('\\', '/'),
+                watched.toString().replace('\\', '/'), steps);
+    }
+
+    @Test
+    @DisplayName("a watcher's event reaches the runner, and the run writes state")
+    void drainsEventsIntoRuns() throws Exception {
+        Path watched = Files.createDirectories(root.resolve("in"));
+        Butler butler = butler(config(watched, """
+                      - uses: fs.template
+                        content: saw ${trigger.name}
+                        to: %s
+                        mkdirs: true
+                """.formatted(root.resolve("out.txt").toString().replace('\\', '/'))), false);
+
+        butler.start();
+        try {
+            Files.writeString(watched.resolve("thing.txt"), "x");
+            eventually("the run to finish", () -> Files.exists(root.resolve("out.txt")));
+        } finally {
+            butler.stop();
+        }
+        assertEquals("saw thing.txt", Files.readString(root.resolve("out.txt")));
+        assertTrue(Files.exists(root.resolve("state/jobs/j.json")));
+    }
+
+    @Test
+    @DisplayName("a dry-run daemon watches and reports, and changes nothing")
+    void dryRunTouchesNothing() throws Exception {
+        Path watched = Files.createDirectories(root.resolve("in"));
+        Butler butler = butler(config(watched, """
+                      - uses: fs.template
+                        content: this must not be written
+                        to: %s
+                """.formatted(root.resolve("out.txt").toString().replace('\\', '/'))), true);
+
+        butler.start();
+        try {
+            Files.writeString(watched.resolve("thing.txt"), "x");
+            eventually("the plan to be printed",
+                    () -> printed.toString(StandardCharsets.UTF_8).contains("DRY RUN"));
+        } finally {
+            butler.stop();
+        }
+
+        String out = printed.toString(StandardCharsets.UTF_8);
+        assertTrue(out.contains("would write"), out);
+        assertFalse(Files.exists(root.resolve("out.txt")),
+                "the safest way to introduce Butler to a running server writes nothing");
+        assertFalse(Files.exists(root.resolve("state/jobs/j.json")),
+                "and records nothing either");
+    }
+
+    @Test
+    @DisplayName("max_concurrent_runs bounds how many runs are in flight at once")
+    void concurrencyIsBounded() throws Exception {
+        Path watched = Files.createDirectories(root.resolve("in"));
+        Path marks = Files.createDirectories(root.resolve("marks"));
+        // Each run makes a file, sleeps, then prunes it, so the count in marks/ is how many runs
+        // are in flight.
+        Butler butler = butler("""
+                settings:
+                  state_dir: %s
+                  poll_interval: 20ms
+                  max_concurrent_runs: 2
+                jobs:
+                  j:
+                    on:
+                      - uses: file.appeared
+                        dir: %s
+                        settle: 20ms
+                        on_startup: all
+                    steps:
+                      - uses: fs.template
+                        content: running
+                        to: %s/${trigger.name}
+                      - uses: control.sleep
+                        duration: 200ms
+                      - uses: fs.prune
+                        dir: %s
+                        keep: 0
+                """.formatted(root.resolve("state").toString().replace('\\', '/'),
+                watched.toString().replace('\\', '/'),
+                marks.toString().replace('\\', '/'),
+                marks.toString().replace('\\', '/')), false);
+
+        AtomicInteger peak = new AtomicInteger();
+        butler.start();
+        try {
+            for (int i = 0; i < 6; i++) {
+                Files.writeString(watched.resolve("artifact-" + i + ".txt"), "x");
+            }
+            Instant until = Instant.now().plusSeconds(3);
+            while (Instant.now().isBefore(until)) {
+                try (var listed = Files.list(marks)) {
+                    peak.accumulateAndGet((int) listed.count(), Math::max);
+                }
+                Thread.sleep(5);
+            }
+        } finally {
+            butler.stop();
+        }
+
+        assertTrue(peak.get() > 0, "no run was ever observed in flight");
+        assertTrue(peak.get() <= 2, "saw " + peak.get() + " runs in flight, the bound is 2");
+    }
+
+    @Test
+    @DisplayName("stopping twice is harmless, and a job with no events is still stopped cleanly")
+    void stopsCleanly() throws IOException {
+        Path watched = Files.createDirectories(root.resolve("in"));
+        Butler butler = butler(config(watched, "      - {uses: control.log, message: hi}"), false);
+        butler.start();
+        butler.stop();
+        butler.stop();
+    }
+
+    @Test
+    @DisplayName("a job whose trigger will not start is reported, and the rest still run")
+    void oneBadTriggerDoesNotStopTheDaemon() throws Exception {
+        Path watched = Files.createDirectories(root.resolve("in"));
+        Butler butler = butler("""
+                settings:
+                  state_dir: %s
+                  poll_interval: 30ms
+                jobs:
+                  broken:
+                    on: [{uses: schedule.cron, expression: not a cron}]
+                    steps: [{uses: control.log, message: never}]
+                  fine:
+                    on:
+                      - uses: file.appeared
+                        dir: %s
+                        settle: 50ms
+                        on_startup: all
+                    steps:
+                      - uses: fs.template
+                        content: ok
+                        to: %s
+                """.formatted(root.resolve("state").toString().replace('\\', '/'),
+                watched.toString().replace('\\', '/'),
+                root.resolve("out.txt").toString().replace('\\', '/')), false);
+
+        butler.start();
+        try {
+            Files.writeString(watched.resolve("thing.txt"), "x");
+            eventually("the working job to run", () -> Files.exists(root.resolve("out.txt")));
+        } finally {
+            butler.stop();
+        }
+    }
+}

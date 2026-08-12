@@ -49,6 +49,35 @@ public record StepResult(Status status, String message, Duration duration, int a
         return new StepResult(Status.SKIPPED, reason, Duration.ZERO, 1, Map.of(), Map.of());
     }
 
+    /**
+     * What a finished process came to, with {@code stdout}, {@code stderr} and {@code exit_code}
+     * attached whether it succeeded or not.
+     *
+     * @param what the program's name, for the failure message
+     */
+    public static StepResult of(ProcessRunner.Completed done, String what) {
+        StepResult result = done.ok() ? ok() : failed(why(done, what));
+        return result
+                .output("stdout", done.stdout())
+                .output("stderr", done.stderr())
+                .output("exit_code", (long) done.exitCode())
+                .duration(done.duration());
+    }
+
+    private static String why(ProcessRunner.Completed done, String what) {
+        if (done.timedOut()) {
+            return what + " ran out of time and was killed";
+        }
+        String tail = done.stderr().isBlank() ? done.stdout() : done.stderr();
+        String reason = what + " exited " + done.exitCode();
+        return tail.isBlank() ? reason : reason + ": " + lastLine(tail);
+    }
+
+    private static String lastLine(String text) {
+        String[] lines = text.strip().split("\n");
+        return lines[lines.length - 1].strip();
+    }
+
     public StepResult output(String key, Object value) {
         Map<String, Object> merged = new LinkedHashMap<>(outputs);
         merged.put(key, value);
@@ -74,6 +103,13 @@ public record StepResult(Status status, String message, Duration duration, int a
         Map<String, Object> merged = new LinkedHashMap<>(vars);
         merged.putAll(values);
         return new StepResult(status, message, duration, attempts, outputs, merged);
+    }
+
+    /**
+     * Replaces what this result has to say for itself.
+     */
+    public StepResult message(String text) {
+        return new StepResult(status, text, duration, attempts, outputs, vars);
     }
 
     public StepResult duration(Duration taken) {

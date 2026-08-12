@@ -55,10 +55,11 @@ public final class AssertStep implements StepType<AssertStep.Config> {
             return "would fail: control.assert needs a condition in \"that\"";
         }
         // Evaluating a condition changes nothing, so a plan can say what it currently comes to.
+        String shown = ctx.resolveCondition(c.that());
         try {
-            return "would assert  " + c.that() + "\n      currently " + ctx.evaluate(c.that());
+            return "would assert  " + shown + "\n      currently " + ctx.evaluate(c.that());
         } catch (RuntimeException e) {
-            return "would assert  " + c.that() + "\n      cannot be judged yet: " + e.getMessage();
+            return "would assert  " + shown + "\n      cannot be judged yet: " + e.getMessage();
         }
     }
 }

@@ -1,5 +1,6 @@
 package net.ryanh.butler.expr;
 
+import net.ryanh.butler.util.Semver;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -231,15 +232,24 @@ class ExpressionTest {
 
         @Test
         void rejectsNonsense() {
-            assertThrows(ExprException.class, () -> Semver.parse("not-a-version"));
+            assertThrows(IllegalArgumentException.class, () -> Semver.parse("not-a-version"));
             assertNull(Semver.tryParse("not-a-version"));
         }
 
         @Test
-        void oversizedComponentsAreExpressionErrorsNotNumberFormat() {
+        @DisplayName("a bad version inside an expression is an expression error, wherever the "
+                + "parser reports it")
+        void badVersionsInsideAnExpression() {
+            ExprException e = assertThrows(ExprException.class,
+                    () -> eval("semver(\"not-a-version\")"));
+            assertTrue(e.getMessage().contains("not a version"), e.getMessage());
+        }
+
+        @Test
+        void oversizedComponentsAreArgumentErrorsNotNumberFormat() {
             // Date-stamped versions are a realistic input and must not escape as an NFE, or
             // tryParse would throw instead of returning null.
-            ExprException e = assertThrows(ExprException.class,
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                     () -> Semver.parse("99999999999.0.0"));
             assertTrue(e.getMessage().contains("too large"), e.getMessage());
             assertNull(Semver.tryParse("99999999999.0.0"));
@@ -378,6 +388,14 @@ class ExpressionTest {
         void matchToleratesNullArguments() {
             assertNull(eval("match(state.missing, \"(x)\", 1)"));
             assertNull(eval("match(\"abc\", state.missing, 1)"));
+        }
+
+        @Test
+        void matchSaysSoWhenTheGroupIsNull() {
+            // The subject and the pattern may be absent; which group to take cannot be.
+            ExprException e = assertThrows(ExprException.class,
+                    () -> eval("match(\"abc\", \"(b)\", state.missing)"));
+            assertTrue(e.getMessage().contains("match() group must be a number"), e.getMessage());
         }
     }
 

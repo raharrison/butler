@@ -16,6 +16,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Binds a step's or trigger's raw parameter map to its own config record.
@@ -42,6 +44,8 @@ public final class Params {
     private static final ObjectMapper MAPPER = JsonMapper.builder()
             .propertyNamingStrategy(NAMING)
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            // So a list parameter takes one value written on its own: `expect_status: 200`.
+            .enable(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY)
             // Every other enum in the config is written lowercase: log_format, backoff, mode.
             .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
             .addModule(butlerScalars())
@@ -51,9 +55,10 @@ public final class Params {
     }
 
     /**
-     * There is one duration syntax in Butler, and it is not ISO-8601. A step parameter typed as a
-     * {@link Duration} therefore takes {@code 30s} like every other duration in the config, parsed
-     * by the same converter the loader uses.
+     * The two scalars with a syntax of their own to report on. A {@link Duration} parameter takes
+     * {@code 30s} rather than ISO-8601, through the same converter the loader uses, and a
+     * {@link Pattern} parameter is compiled here so a bad regex is a diagnostic rather than a
+     * watcher that dies at startup.
      */
     private static SimpleModule butlerScalars() {
         SimpleModule module = new SimpleModule("butler-scalars");
@@ -64,6 +69,19 @@ public final class Params {
                     return Durations.parse(p.getString());
                 } catch (IllegalArgumentException e) {
                     throw new BindingException(e.getMessage());
+                }
+            }
+        });
+        module.addDeserializer(Pattern.class, new ValueDeserializer<Pattern>() {
+            @Override
+            public Pattern deserialize(JsonParser p, DeserializationContext ctxt) {
+                String source = p.getString();
+                try {
+                    return Pattern.compile(source);
+                } catch (PatternSyntaxException e) {
+                    throw new BindingException(Literals.of(source)
+                            + " is not a usable regular expression: " + e.getDescription()
+                            + " near index " + e.getIndex());
                 }
             }
         });

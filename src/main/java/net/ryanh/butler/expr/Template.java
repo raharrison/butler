@@ -1,5 +1,7 @@
 package net.ryanh.butler.expr;
 
+import net.ryanh.butler.util.Literals;
+
 import java.util.List;
 
 /**
@@ -43,6 +45,22 @@ public record Template(List<Part> parts) {
             return evaluator.eval(h.node());
         }
         return render(evaluator);
+    }
+
+    /**
+     * Renders each hole as the literal the author would have written, keeping the text around it,
+     * so {@code json.version == ${v}} becomes {@code json.version == "1.2.4"} and stays an
+     * expression rather than becoming text no parser accepts.
+     */
+    public String renderLiterals(Evaluator evaluator) {
+        StringBuilder sb = new StringBuilder();
+        for (Part p : parts) {
+            switch (p) {
+                case Part.Text t -> sb.append(t.value());
+                case Part.Hole h -> sb.append(Literals.of(evaluator.eval(h.node())));
+            }
+        }
+        return sb.toString();
     }
 
     public List<Node> holes() {

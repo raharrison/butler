@@ -1,6 +1,7 @@
 package net.ryanh.butler.expr;
 
 import net.ryanh.butler.util.Durations;
+import net.ryanh.butler.util.Semver;
 import net.ryanh.butler.util.Suggestions;
 
 import java.nio.file.Files;
@@ -68,7 +69,7 @@ public final class Functions {
 
     static Object call(String name, List<Object> args) {
         return switch (name) {
-            case "semver" -> Semver.parse(str(args.getFirst()));
+            case "semver" -> semver(args.getFirst());
             case "exists" -> args.getFirst() != null;
             case "default" -> args.getFirst() != null ? args.getFirst() : args.get(1);
             case "len" -> len(args.getFirst());
@@ -83,6 +84,18 @@ public final class Functions {
             case "now" -> Instant.now();
             default -> throw new ExprException("unknown function \"" + name + "\"");
         };
+    }
+
+    /**
+     * {@link Semver} reports a bad version as an argument problem, since its other callers have no
+     * expression to blame. Here there is one.
+     */
+    private static Semver semver(Object value) {
+        try {
+            return Semver.parse(str(value));
+        } catch (IllegalArgumentException e) {
+            throw new ExprException("semver(): " + e.getMessage());
+        }
     }
 
     private static Object nullable(Object value, Function<String, Object> fn) {
@@ -111,7 +124,13 @@ public final class Functions {
         Object subject = args.getFirst();
         Object regex = args.get(1);
         if (subject == null || regex == null) return null;
-        int group = args.size() == 3 ? (int) (long) toLong(args.get(2)) : 0;
+        Long group = 0L;
+        if (args.size() == 3) {
+            group = toLong(args.get(2));
+        }
+        if (group == null) {
+            throw new ExprException("match() group must be a number, not null");
+        }
         if (group < 0) {
             throw new ExprException("match() group must not be negative, got " + group);
         }
@@ -121,7 +140,7 @@ public final class Functions {
             throw new ExprException("match() asked for group " + group
                     + " but the pattern has " + m.groupCount());
         }
-        return m.group(group);
+        return m.group(group.intValue());
     }
 
     static Pattern compile(String regex) {

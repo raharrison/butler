@@ -1,5 +1,6 @@
 package net.ryanh.butler.cli;
 
+import net.ryanh.butler.runtime.Butler;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.IVersionProvider;
 import picocli.CommandLine.Mixin;
@@ -55,9 +56,25 @@ public final class ButlerCommand implements Callable<Integer> {
         if (checkOnly) {
             return EXIT_OK;
         }
-        System.err.println("the daemon is not implemented yet (milestone M4)");
-        System.err.println("try: butler validate | butler check");
-        return EXIT_FAILURE;
+        return daemon();
+    }
+
+    /**
+     * Runs until the process is asked to stop. The shutdown hook is what a systemd
+     * {@code TERM} reaches; draining what is in flight is {@link Butler#stop}'s job.
+     */
+    private int daemon() {
+        Butler butler = new Butler(configOptions.environment(), configOptions.triggers(),
+                configOptions.dryRun(), System.out);
+        Runtime.getRuntime().addShutdownHook(new Thread(butler::stop, "butler-shutdown"));
+        butler.start();
+        try {
+            butler.awaitShutdown();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            butler.stop();
+        }
+        return EXIT_OK;
     }
 
     /**

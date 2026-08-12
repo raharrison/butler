@@ -1,5 +1,6 @@
 package net.ryanh.butler.runtime;
 
+import net.ryanh.butler.spi.Notifier;
 import net.ryanh.butler.spi.StepType;
 import net.ryanh.butler.spi.TriggerType;
 import org.junit.jupiter.api.DisplayName;
@@ -30,15 +31,19 @@ class ServiceLoaderTest {
     @Test
     @DisplayName("every step under step/ is registered")
     void everyStepIsListed() {
-        assertEquals(implementationsUnder("step", StepType.class),
-                declared(StepType.class.getName()));
+        assertEquals(implementationsUnder("step"), declared(StepType.class.getName()));
     }
 
     @Test
     @DisplayName("every trigger under trigger/ is registered")
     void everyTriggerIsListed() {
-        assertEquals(implementationsUnder("trigger", TriggerType.class),
-                declared(TriggerType.class.getName()));
+        assertEquals(implementationsUnder("trigger"), declared(TriggerType.class.getName()));
+    }
+
+    @Test
+    @DisplayName("every notifier under notify/ is registered")
+    void everyNotifierIsListed() {
+        assertEquals(implementationsUnder("notify"), declared(Notifier.class.getName()));
     }
 
     @Test
@@ -46,6 +51,7 @@ class ServiceLoaderTest {
     void theRegistriesAgree() {
         assertTrue(StepRegistry.discover().names().containsAll(List.of("control.log", "control.set")));
         assertTrue(TriggerRegistry.discover().names().contains("manual"));
+        assertTrue(NotifierRegistry.discover().names().contains("notify.slack"));
     }
 
     /**
@@ -63,14 +69,14 @@ class ServiceLoaderTest {
     }
 
     /**
-     * Class names under a source directory that implement the interface. Read from the source
+     * Class names under a source directory that are a step or a trigger. Read from the source
      * tree rather than by scanning the classpath, so a type that was written but never registered
      * is still found.
      */
-    private static Set<String> implementationsUnder(String directory, Class<?> service) {
+    private static Set<String> implementationsUnder(String directory) {
         try (var files = Files.walk(SOURCES.resolve(directory))) {
             return files.filter(p -> p.toString().endsWith(".java"))
-                    .filter(p -> implementsService(p, service))
+                    .filter(ServiceLoaderTest::isRegisterable)
                     .map(ServiceLoaderTest::className)
                     .collect(Collectors.toCollection(TreeSet::new));
         } catch (IOException e) {
@@ -78,9 +84,16 @@ class ServiceLoaderTest {
         }
     }
 
-    private static boolean implementsService(Path file, Class<?> service) {
+    /**
+     * A type answering {@code name()} is one the registry keys by that name, whether it implements
+     * the interface itself or inherits it from a shared base. An abstract base does not count:
+     * {@code systemd.restart}, {@code start} and {@code reload} share one, and it has no name of
+     * its own to register.
+     */
+    private static boolean isRegisterable(Path file) {
         try {
-            return Files.readString(file).contains("implements " + service.getSimpleName() + "<");
+            String source = Files.readString(file);
+            return source.contains("public String name() {") && !source.contains("abstract class");
         } catch (IOException e) {
             throw new UncheckedIOException("could not read " + file, e);
         }

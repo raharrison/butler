@@ -27,25 +27,21 @@ public final class ConfigValidator {
             List.of("vars", "trigger", "steps", "state", "env", "secret", "run", "butler");
 
     /**
-     * Locals a step may inject into a condition's scope, such as {@code status} and {@code json}
-     * for {@code http.wait}'s {@code until:}. Which ones a given step actually provides is known
-     * only to the step registry, so this pass accepts the union of them all.
+     * The fields on every step's result, whatever its type. An {@code extract:} expression sees
+     * these beside the step's own outputs.
      */
-    private static final List<String> STEP_LOCALS =
-            List.of("status", "headers", "body", "json", "value", "stdout", "stderr", "exit_code");
+    private static final List<String> RESULT_FIELDS =
+            List.of("status", "ok", "failed", "skipped", "duration", "attempts", "message");
 
     private ConfigValidator() {
     }
 
     /**
-     * @param conditionParams step parameters holding a bare condition rather than a string
-     *                        template, such as {@code until:}. Without them such a value is treated
-     *                        as a template and one containing no {@code ${}} is never parsed at
-     *                        all. The set comes from {@code StepRegistry.conditionParams()}, passed
-     *                        in because {@code config} does not depend on the runtime.
+     * @param vocabulary what each {@code uses:} reads as a condition and what it injects into its
+     *                   own expressions, supplied by the caller because {@code config} does not
+     *                   depend on the runtime
      */
-    public static void validate(ButlerConfig config, Diagnostics diags,
-                                Set<String> conditionParams) {
+    public static void validate(ButlerConfig config, Diagnostics diags, Vocabulary vocabulary) {
         if (config == null) {
             return;
         }
@@ -54,30 +50,40 @@ public final class ConfigValidator {
                 n.params().forEach((k, v) ->
                         checkTemplate(diags, n.path() + "/" + k, v, NAMESPACES)));
 
-        config.jobs().values().forEach(job -> job(config, job, diags, conditionParams));
+        config.jobs().values().forEach(job -> job(config, job, diags, vocabulary));
     }
 
     private static void job(ButlerConfig config, JobDef job, Diagnostics diags,
-                            Set<String> conditionParams) {
+                            Vocabulary vocabulary) {
         job.vars().forEach((k, v) -> checkTemplate(diags, job.path() + "/vars/" + k, v, NAMESPACES));
         job.env().forEach((k, v) -> checkTemplate(diags, job.path() + "/env/" + k, v, NAMESPACES));
 
         for (TriggerDef t : job.on()) {
-            t.params().forEach((k, v) -> checkTemplate(diags, t.path() + "/" + k, v, NAMESPACES));
+            Vocabulary.Facts trigger = vocabulary.trigger(t.uses());
+            for (Map.Entry<String, Object> param : t.params().entrySet()) {
+                String path = t.path() + "/" + param.getKey();
+                if (trigger != null && trigger.conditions().contains(param.getKey())) {
+                    // Syntax only: its roots are whatever the trigger's own regex captured.
+                    checkCondition(diags, path, asText(param.getValue()), null);
+                } else {
+                    checkNotTemplated(diags, path, param.getValue());
+                }
+            }
         }
 
         checkCondition(diags, job.path() + "/when", job.when(), NAMESPACES);
 
-        checkSteps(job.discover(), diags, true, conditionParams);
-        checkSteps(job.steps(), diags, false, conditionParams);
-        checkSteps(job.onFailure(), diags, false, conditionParams);
-        checkSteps(job.onSuccess(), diags, false, conditionParams);
-        checkSteps(job.always(), diags, false, conditionParams);
+        checkSteps(job.discover(), diags, true, vocabulary);
+        checkSteps(job.steps(), diags, false, vocabulary);
+        checkSteps(job.onFailure(), diags, false, vocabulary);
+        checkSteps(job.onSuccess(), diags, false, vocabulary);
+        checkSteps(job.always(), diags, false, vocabulary);
 
         job.persist().forEach((k, v) ->
                 checkTemplate(diags, job.path() + "/persist/" + k, v, NAMESPACES));
 
         if (job.notifyPolicy() != null) {
+            // A null "to" was already reported as a missing required key by the loader.
             String to = job.notifyPolicy().to();
             if (to != null && !config.notifiers().containsKey(to)) {
                 diags.error(job.path() + "/notify/to",
@@ -88,16 +94,27 @@ public final class ConfigValidator {
                     checkTemplate(diags, job.path() + "/notify/" + k, v, NAMESPACES));
         }
 
-        checkRegisterNames(job, diags, conditionParams);
+        checkRegisterNames(job, diags, vocabulary);
         checkStateWithoutDiscover(job, diags);
     }
 
+    /**
+     * Each kind of expression is judged against what can reach it: a step's {@code when:} against
+     * the namespaces alone, a condition parameter against those plus the step's locals, and
+     * {@code extract:} against those plus the fields every result carries.
+     *
+     * <p>An unrecognised {@code uses:} leaves the roots unjudged, since the unknown type is
+     * already reported and a second message about {@code ${status}} would be the same mistake
+     * twice.
+     */
     private static void checkSteps(List<StepDef> steps, Diagnostics diags, boolean isDiscover,
-                                   Set<String> conditionParams) {
-        List<String> allowed = new ArrayList<>(NAMESPACES);
-        allowed.addAll(STEP_LOCALS);
-
+                                   Vocabulary vocabulary) {
         for (StepDef step : steps) {
+            Vocabulary.Facts facts = vocabulary.step(step.uses());
+            List<String> inConditions = facts == null ? null : roots(facts.locals());
+            List<String> inExtract = facts == null ? null
+                    : roots(facts.locals(), RESULT_FIELDS);
+
             // A step's own "when:" decides whether to run it at all, before there is any probe to
             // describe, so the locals a probe injects are not in scope there.
             checkCondition(diags, step.path() + "/when", step.when(), NAMESPACES);
@@ -105,10 +122,11 @@ public final class ConfigValidator {
                     checkTemplate(diags, step.path() + "/env/" + k, v, NAMESPACES));
 
             step.params().forEach((k, v) -> {
-                if (conditionParams.contains(k)) {
-                    checkCondition(diags, step.path() + "/" + k, asText(v), allowed);
+                if (facts != null && facts.conditions().contains(k)) {
+                    checkCondition(diags, step.path() + "/" + k, asText(v), inConditions);
                 } else {
-                    checkTemplate(diags, step.path() + "/" + k, v, allowed);
+                    checkTemplate(diags, step.path() + "/" + k, v,
+                            facts == null ? null : NAMESPACES);
                 }
             });
 
@@ -118,7 +136,7 @@ public final class ConfigValidator {
                                 + "elsewhere use \"register\" to expose a step's result");
             }
             step.extract().forEach((k, v) ->
-                    checkCondition(diags, step.path() + "/extract/" + k, v, allowed));
+                    checkCondition(diags, step.path() + "/extract/" + k, v, inExtract));
 
             if (step.register() != null && !isIdentifier(step.register())) {
                 diags.error(step.path() + "/register",
@@ -134,8 +152,7 @@ public final class ConfigValidator {
      * steps that have already run. Discovery runs before everything, so what it registers is
      * visible to the pipeline; hooks run after the pipeline and can see all of it.
      */
-    private static void checkRegisterNames(JobDef job, Diagnostics diags,
-                                           Set<String> conditionParams) {
+    private static void checkRegisterNames(JobDef job, Diagnostics diags, Vocabulary vocabulary) {
         Set<String> everyName = new LinkedHashSet<>();
         for (StepDef step : allSteps(job)) {
             if (step.register() != null) {
@@ -145,12 +162,12 @@ public final class ConfigValidator {
 
         Set<String> declared = new LinkedHashSet<>();
         Set<String> afterDiscover =
-                checkSection(job.discover(), diags, Set.of(), declared, everyName, conditionParams);
+                checkSection(job.discover(), diags, Set.of(), declared, everyName, vocabulary);
         Set<String> afterSteps =
-                checkSection(job.steps(), diags, afterDiscover, declared, everyName, conditionParams);
-        checkSection(job.onFailure(), diags, afterSteps, declared, everyName, conditionParams);
-        checkSection(job.onSuccess(), diags, afterSteps, declared, everyName, conditionParams);
-        checkSection(job.always(), diags, afterSteps, declared, everyName, conditionParams);
+                checkSection(job.steps(), diags, afterDiscover, declared, everyName, vocabulary);
+        checkSection(job.onFailure(), diags, afterSteps, declared, everyName, vocabulary);
+        checkSection(job.onSuccess(), diags, afterSteps, declared, everyName, vocabulary);
+        checkSection(job.always(), diags, afterSteps, declared, everyName, vocabulary);
     }
 
     private static List<StepDef> allSteps(JobDef job) {
@@ -171,11 +188,11 @@ public final class ConfigValidator {
      */
     private static Set<String> checkSection(List<StepDef> steps, Diagnostics diags,
                                             Set<String> available, Set<String> declared,
-                                            Set<String> everyName, Set<String> conditionParams) {
+                                            Set<String> everyName, Vocabulary vocabulary) {
         Set<String> visible = new LinkedHashSet<>(available);
 
         for (StepDef step : steps) {
-            for (String referenced : referencedSteps(step, conditionParams)) {
+            for (String referenced : referencedSteps(step, vocabulary)) {
                 if (visible.contains(referenced)) {
                     continue;
                 }
@@ -204,8 +221,10 @@ public final class ConfigValidator {
     /**
      * The {@code steps.<name>} references a step makes, across all its expressions.
      */
-    private static Set<String> referencedSteps(StepDef step, Set<String> conditionParams) {
+    private static Set<String> referencedSteps(StepDef step, Vocabulary vocabulary) {
         Set<String> out = new LinkedHashSet<>();
+        Vocabulary.Facts facts = vocabulary.step(step.uses());
+        List<String> conditionParams = facts == null ? List.of() : facts.conditions();
 
         collectStepRefs(parseQuietly(step.when()), out);
         step.extract().values().forEach(v -> collectStepRefs(parseQuietly(v), out));
@@ -289,6 +308,15 @@ public final class ConfigValidator {
 
     // ------------------------------------------------------------------ helpers
 
+    @SafeVarargs
+    private static List<String> roots(List<String>... extra) {
+        List<String> out = new ArrayList<>(NAMESPACES);
+        for (List<String> more : extra) {
+            out.addAll(more);
+        }
+        return List.copyOf(out);
+    }
+
     private static String asText(Object value) {
         return value == null ? null : String.valueOf(value);
     }
@@ -302,6 +330,30 @@ public final class ConfigValidator {
             checkRoots(diags, path, Expressions.condition(source), allowedRoots);
         } catch (ExprException e) {
             diags.error(path, "invalid condition: " + e.getMessage());
+        }
+    }
+
+    /**
+     * A watcher is started before any event exists, so there is no run to resolve a trigger's
+     * parameters against and a {@code ${...}} in one would be watched for literally.
+     */
+    private static void checkNotTemplated(Diagnostics diags, String path, Object value) {
+        switch (value) {
+            case null -> {
+            }
+            case Map<?, ?> m -> m.forEach((k, v) -> checkNotTemplated(diags, path + "/" + k, v));
+            case List<?> l -> {
+                for (int i = 0; i < l.size(); i++) {
+                    checkNotTemplated(diags, path + "/" + i, l.get(i));
+                }
+            }
+            default -> {
+                if (String.valueOf(value).contains("${")) {
+                    diags.error(path, "a trigger's parameters are read once when the daemon "
+                            + "starts, before there is any run to resolve against, so \"${...}\" "
+                            + "here would be taken literally");
+                }
+            }
         }
     }
 
@@ -337,9 +389,15 @@ public final class ConfigValidator {
      * An unknown namespace is an error, while an unknown path within a known namespace is not:
      * {@code default(state.deployed_version, "0.0.0")} must keep working on a first run, but
      * {@code ${triger.version}} should be caught before the daemon ever starts.
+     *
+     * @param allowedRoots what the expression may reference, or null when the step type is unknown
+     *                     and there is no way to tell a local from a typo
      */
     private static void checkRoots(Diagnostics diags, String path, Node node,
                                    List<String> allowedRoots) {
+        if (allowedRoots == null) {
+            return;
+        }
         for (Node.Var v : Expressions.variables(node)) {
             String root = v.root();
             if (!allowedRoots.contains(root)) {

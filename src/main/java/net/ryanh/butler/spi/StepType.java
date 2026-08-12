@@ -44,6 +44,18 @@ public interface StepType<C> {
     }
 
     /**
+     * Names this step injects into its own expressions, beside the context namespaces: what a
+     * condition parameter sees of the probe in flight, and what {@code extract:} reads from the
+     * result. {@code status}, {@code headers}, {@code body} and {@code json} for an HTTP step.
+     *
+     * <p>Validation judges each expression against what can reach it, so omitting a name here
+     * turns a valid config into an error.
+     */
+    default List<String> locals() {
+        return List.of();
+    }
+
+    /**
      * Read-only checks: does the source exist, is the target writable, is the unit known.
      */
     default List<String> preflight(C config, RunContext ctx) {

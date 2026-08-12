@@ -1,10 +1,7 @@
 package net.ryanh.butler.runtime;
 
 import net.ryanh.butler.config.Diagnostics;
-import net.ryanh.butler.config.model.ButlerConfig;
-import net.ryanh.butler.config.model.JobDef;
-import net.ryanh.butler.config.model.StepDef;
-import net.ryanh.butler.config.model.TriggerDef;
+import net.ryanh.butler.config.model.*;
 import net.ryanh.butler.util.Suggestions;
 
 import java.util.List;
@@ -25,9 +22,12 @@ public final class RegistryValidator {
     }
 
     public static void validate(ButlerConfig config, StepRegistry steps, TriggerRegistry triggers,
-                                Diagnostics diags) {
+                                NotifierRegistry notifiers, Diagnostics diags) {
         if (config == null) {
             return;
+        }
+        for (NotifierDef notifier : config.notifiers().values()) {
+            notifier(notifier, notifiers, diags);
         }
         for (JobDef job : config.jobs().values()) {
             for (TriggerDef trigger : job.on()) {
@@ -56,6 +56,18 @@ public final class RegistryValidator {
             return;
         }
         parameters(def.path(), def.uses(), "trigger", def.params(), type.configType(), diags);
+    }
+
+    private static void notifier(NotifierDef def, NotifierRegistry registry, Diagnostics diags) {
+        if (def.uses() == null) {
+            return;
+        }
+        var type = registry.find(def.uses());
+        if (type == null) {
+            diags.error(def.path() + "/uses", unknown("notifier", def.uses(), registry.names()));
+            return;
+        }
+        parameters(def.path(), def.uses(), "notifier", def.params(), type.configType(), diags);
     }
 
     private static void step(StepDef def, StepRegistry registry, Diagnostics diags) {

@@ -1,8 +1,10 @@
 package net.ryanh.butler.runtime;
 
+import net.ryanh.butler.config.Vocabulary;
 import net.ryanh.butler.spi.TriggerType;
 
 import java.util.*;
+import java.util.function.Function;
 
 /**
  * Every trigger type the daemon can watch with, keyed by {@link TriggerType#name()}.
@@ -57,5 +59,15 @@ public final class TriggerRegistry {
 
     public Set<String> names() {
         return byName.keySet();
+    }
+
+    /**
+     * This registry as the trigger half of the seam {@code ConfigValidator} takes.
+     */
+    public Function<String, Vocabulary.Facts> vocabulary() {
+        return uses -> {
+            TriggerType<?> type = byName.get(uses);
+            return type == null ? null : new Vocabulary.Facts(type.conditions(), List.of());
+        };
     }
 }

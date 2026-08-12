@@ -1,6 +1,7 @@
 package net.ryanh.butler.runtime;
 
 import net.ryanh.butler.spi.StepResult;
+import net.ryanh.butler.util.Durations;
 import org.slf4j.MDC;
 
 import java.time.Duration;
@@ -38,6 +39,23 @@ final class StepExecution {
     record Attempt(StepResult result, boolean timedOut, boolean stranded) {
     }
 
+    /**
+     * How long a step may take: its own timeout, or what is left of the job's, whichever runs out
+     * first. This is the whole of the job-level timeout; nothing races the run as a whole.
+     *
+     * @param deadline when the job's own time runs out, or null if it has no {@code timeout:}
+     */
+    static Duration budget(Duration own, Instant deadline) {
+        if (deadline == null) {
+            return own;
+        }
+        Duration remaining = Duration.between(Instant.now(), deadline);
+        if (remaining.isNegative()) {
+            remaining = Duration.ZERO;
+        }
+        return own == null || own.compareTo(remaining) > 0 ? remaining : own;
+    }
+
     static Attempt once(StepResolver.Ready ready, Duration timeout) {
         if (timeout == null) {
             return new Attempt(call(ready), false, false);
@@ -63,10 +81,14 @@ final class StepExecution {
             boolean stopped = thread.join(GRACE);
             StepResult late = holder.get();
             StepResult result = timedOut(timeout, started);
+            // A step that caught its own interrupt knows what the runtime does not: what the
+            // process it killed printed, how far a probe got. Outputs tell that apart from a step
+            // that merely let the interrupt escape, which has none and nothing to add.
             if (late != null && !late.outputs().isEmpty()) {
-                // A step that turned its interrupt into a result of its own knows things the
-                // runtime does not: what the process it killed had printed, and its exit code.
                 result = result.outputs(late.outputs());
+                if (late.message() != null && !late.message().isBlank()) {
+                    result = result.message(result.message() + ": " + late.message());
+                }
             }
             return new Attempt(result, true, !stopped);
         } catch (InterruptedException e) {
@@ -89,7 +111,7 @@ final class StepExecution {
     }
 
     private static StepResult timedOut(Duration timeout, Instant started) {
-        return StepResult.failed("timed out after " + timeout.toMillis() + "ms")
+        return StepResult.failed("timed out after " + Durations.format(timeout))
                 .duration(Duration.between(started, Instant.now()));
     }
 

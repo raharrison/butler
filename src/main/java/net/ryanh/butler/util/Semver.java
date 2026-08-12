@@ -1,4 +1,4 @@
-package net.ryanh.butler.expr;
+package net.ryanh.butler.util;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,15 +30,15 @@ public final class Semver implements Comparable<Semver> {
     }
 
     /**
-     * @throws ExprException if the text is not a recognisable version
+     * @throws IllegalArgumentException if the text is not a recognisable version
      */
     public static Semver parse(String text) {
         if (text == null) {
-            throw new ExprException("semver() got null");
+            throw new IllegalArgumentException("no version given");
         }
         Matcher m = PATTERN.matcher(text.trim());
         if (!m.matches()) {
-            throw new ExprException("not a version: \"" + text + "\"");
+            throw new IllegalArgumentException("not a version: \"" + text + "\"");
         }
         List<String> pre = m.group(4) == null ? List.of() : List.of(m.group(4).split("\\."));
         return new Semver(
@@ -50,7 +50,8 @@ public final class Semver implements Comparable<Semver> {
     }
 
     /**
-     * Parses one numeric component, reporting overflow as an expression error rather than NFE.
+     * Overflow is reported the same way as everything else here, so {@link #tryParse} returns null
+     * for a date-stamped version rather than throwing.
      */
     private static int component(String digits, String whole) {
         if (digits == null) {
@@ -59,7 +60,7 @@ public final class Semver implements Comparable<Semver> {
         try {
             return Integer.parseInt(digits);
         } catch (NumberFormatException e) {
-            throw new ExprException(
+            throw new IllegalArgumentException(
                     "version component \"" + digits + "\" in \"" + whole + "\" is too large");
         }
     }
@@ -70,7 +71,7 @@ public final class Semver implements Comparable<Semver> {
     public static Semver tryParse(String text) {
         try {
             return parse(text);
-        } catch (ExprException e) {
+        } catch (IllegalArgumentException e) {
             return null;
         }
     }

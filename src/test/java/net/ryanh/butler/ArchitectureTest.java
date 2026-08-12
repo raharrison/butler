@@ -22,6 +22,7 @@ class ArchitectureTest {
     private static final String CLI = "net.ryanh.butler.cli..";
     private static final String CONFIG = "net.ryanh.butler.config..";
     private static final String EXPR = "net.ryanh.butler.expr..";
+    private static final String NOTIFY = "net.ryanh.butler.notify..";
     private static final String RUNTIME = "net.ryanh.butler.runtime..";
     private static final String SPI = "net.ryanh.butler.spi..";
     private static final String STEP = "net.ryanh.butler.step..";
@@ -41,33 +42,48 @@ class ArchitectureTest {
     void spiIsALeaf() {
         check(noClasses().that().resideInAPackage(SPI)
                 .should().dependOnClassesThat()
-                .resideInAnyPackage(CLI, CONFIG, EXPR, RUNTIME, STEP, TRIGGER, UTIL));
+                .resideInAnyPackage(CLI, CONFIG, EXPR, NOTIFY, RUNTIME, STEP, TRIGGER, UTIL));
     }
 
     /**
-     * Steps and triggers see the SPI and {@code util}, and nothing else. {@code util} is allowed
-     * because it holds the one duration syntax: forbidding it would mean every step that formats
-     * a timeout inventing its own.
+     * The three extension points see the SPI and {@code util}, and nothing else. {@code util} is
+     * allowed because it holds the one duration syntax and the one semver: forbidding it would mean
+     * every step that formats a timeout or ranks a release inventing its own.
      */
     @Test
-    @DisplayName("steps and triggers depend only on spi and util")
+    @DisplayName("steps, triggers and notifiers depend only on spi and util")
     void extensionsSeeOnlyTheSpi() {
-        check(noClasses().that().resideInAnyPackage(STEP, TRIGGER)
+        check(noClasses().that().resideInAnyPackage(STEP, TRIGGER, NOTIFY)
                 .should().dependOnClassesThat().resideInAnyPackage(CLI, CONFIG, EXPR, RUNTIME));
     }
 
+    /**
+     * Nor on each other: a step that sends a notification goes through {@code spi/Notifications},
+     * the way it reaches a process through {@code spi/ProcessRunner}.
+     */
     @Test
-    @DisplayName("the runtime never imports a concrete step or trigger")
+    @DisplayName("steps, triggers and notifiers do not depend on each other")
+    void extensionsDoNotSeeEachOther() {
+        check(noClasses().that().resideInAPackage(STEP)
+                .should().dependOnClassesThat().resideInAnyPackage(TRIGGER, NOTIFY));
+        check(noClasses().that().resideInAPackage(TRIGGER)
+                .should().dependOnClassesThat().resideInAnyPackage(STEP, NOTIFY));
+        check(noClasses().that().resideInAPackage(NOTIFY)
+                .should().dependOnClassesThat().resideInAnyPackage(STEP, TRIGGER));
+    }
+
+    @Test
+    @DisplayName("the runtime never imports a concrete step, trigger or notifier")
     void runtimeKnowsNoStep() {
         check(noClasses().that().resideInAPackage(RUNTIME)
-                .should().dependOnClassesThat().resideInAnyPackage(STEP, TRIGGER));
+                .should().dependOnClassesThat().resideInAnyPackage(STEP, TRIGGER, NOTIFY));
     }
 
     @Test
     @DisplayName("config knows nothing of the runtime, the SPI or any step")
     void configStaysBelowTheRuntime() {
         check(noClasses().that().resideInAPackage(CONFIG)
-                .should().dependOnClassesThat().resideInAnyPackage(CLI, RUNTIME, SPI, STEP, TRIGGER));
+                .should().dependOnClassesThat().resideInAnyPackage(CLI, NOTIFY, RUNTIME, SPI, STEP, TRIGGER));
     }
 
     /**
@@ -77,7 +93,7 @@ class ArchitectureTest {
     @DisplayName("nothing below the cli depends on it")
     void nothingDependsOnTheCli() {
         check(noClasses().that()
-                .resideInAnyPackage(CONFIG, EXPR, RUNTIME, SPI, STEP, TRIGGER, UTIL)
+                .resideInAnyPackage(CONFIG, EXPR, NOTIFY, RUNTIME, SPI, STEP, TRIGGER, UTIL)
                 .should().dependOnClassesThat().resideInAPackage(CLI));
     }
 
@@ -86,10 +102,10 @@ class ArchitectureTest {
     void languageLayersStayLow() {
         check(noClasses().that().resideInAPackage(UTIL)
                 .should().dependOnClassesThat()
-                .resideInAnyPackage(CLI, CONFIG, EXPR, RUNTIME, SPI, STEP, TRIGGER));
+                .resideInAnyPackage(CLI, CONFIG, EXPR, NOTIFY, RUNTIME, SPI, STEP, TRIGGER));
         check(noClasses().that().resideInAPackage(EXPR)
                 .should().dependOnClassesThat()
-                .resideInAnyPackage(CLI, CONFIG, RUNTIME, SPI, STEP, TRIGGER));
+                .resideInAnyPackage(CLI, CONFIG, NOTIFY, RUNTIME, SPI, STEP, TRIGGER));
     }
 
     @Test

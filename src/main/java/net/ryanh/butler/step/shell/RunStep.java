@@ -45,9 +45,14 @@ public final class RunStep implements StepType<RunStep.Config> {
     }
 
     @Override
+    public List<String> locals() {
+        return List.of("stdout", "stderr", "exit_code");
+    }
+
+    @Override
     public StepResult execute(Config c, RunContext ctx) throws Exception {
         ProcessRunner.Command command = ctx.command().argv(c.shell(), "-c", c.script());
-        return Outputs.of(ctx.processes().run(command), c.shell());
+        return StepResult.of(ctx.processes().run(command), c.shell());
     }
 
     @Override
@@ -69,6 +74,6 @@ public final class RunStep implements StepType<RunStep.Config> {
 
     @Override
     public List<String> preflight(Config c, RunContext ctx) {
-        return Outputs.preflight(ctx.command().workingDir(), c.shell());
+        return Programs.preflight(ctx.command().workingDir(), c.shell());
     }
 }

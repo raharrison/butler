@@ -5,11 +5,11 @@ import net.ryanh.butler.config.model.JobDef;
 import net.ryanh.butler.config.model.TriggerDef;
 import net.ryanh.butler.runtime.Params;
 import net.ryanh.butler.runtime.TriggerRegistry;
+import net.ryanh.butler.runtime.Triggering;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.spi.TriggerContext;
 import net.ryanh.butler.spi.TriggerType;
 
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,21 +71,8 @@ final class Events {
     }
 
     private static TriggerContext context(ButlerConfig config, JobDef job) {
-        return new TriggerContext() {
-            @Override
-            public String job() {
-                return job.name();
-            }
-
-            @Override
-            public Duration pollInterval() {
-                return config.settings().pollInterval();
-            }
-
-            @Override
-            public boolean dryRun() {
-                return true;
-            }
-        };
+        // Dry run either way: asking a trigger what it can see starts no watcher and changes
+        // nothing, whether the command goes on to run the job or only report it.
+        return new Triggering(job.name(), config.settings().pollInterval(), true);
     }
 }

@@ -1,6 +1,7 @@
 package net.ryanh.butler.expr;
 
 import net.ryanh.butler.util.Literals;
+import net.ryanh.butler.util.Semver;
 
 import java.time.Duration;
 import java.util.*;
@@ -222,6 +223,16 @@ public final class Evaluator {
         if (v instanceof Semver s) return s;
         if (v instanceof String s) return Semver.tryParse(s);
         return null;
+    }
+
+    /**
+     * Orders two values the way {@code <} and {@code >} do, for callers ranking values outside an
+     * expression.
+     *
+     * @throws ExprException if the two cannot be ordered
+     */
+    public static int rank(Object l, Object r) {
+        return compare(l, r, Node.Op.GT);
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})

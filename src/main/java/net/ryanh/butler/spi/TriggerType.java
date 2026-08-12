@@ -22,6 +22,14 @@ public interface TriggerType<C> {
     Watcher start(C config, EventSink sink, TriggerContext ctx);
 
     /**
+     * Parameters read as a bare expression rather than a string template, e.g. {@code order_by:}
+     * (DESIGN.md §4), exactly as {@link StepType#conditions()}.
+     */
+    default List<String> conditions() {
+        return List.of();
+    }
+
+    /**
      * The events this trigger would fire for as things stand right now, oldest first, without
      * starting a watcher.
      *

@@ -64,7 +64,11 @@ public final class PlanRenderer {
 
         out.add("");
         if (!plan.wouldRun()) {
-            out.add(note("steps", "not run: the job's when is false"));
+            // A condition nobody could evaluate is not one that came out false: the run it
+            // describes would end FAILED.
+            out.add(note("steps", plan.when().error() != null
+                    ? "not shown: the job's when could not be evaluated"
+                    : "not run: the job's when is false"));
             // Discovery still ran, and what its preflight found is still true of this host.
             warnings(out, plan);
             return String.join("\n", out) + "\n";

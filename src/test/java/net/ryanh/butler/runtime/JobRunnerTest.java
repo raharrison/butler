@@ -454,6 +454,63 @@ class JobRunnerTest {
         }
 
         @Test
+        @DisplayName("the runtime says how long it waited and the step says what it saw, because "
+                + "the tail is the part worth reading")
+        void aCutOffStepKeepsItsOwnAccount() {
+            StepRegistry registry = StepRegistry.of(new StallingStep());
+            ConfigLoader.Result result = Fixture.config("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Wait for health
+                            uses: test.stall
+                            timeout: 100ms
+                    """, registry);
+            Run run = new JobRunner(Fixture.environment(result, registry, stateDir))
+                    .run(result.config().jobs().get("j"), new Event("manual", Map.of(), null));
+
+            String message = step(run, "Wait for health").message();
+            assertTrue(message.startsWith("timed out after 100ms: last status 503 after "),
+                    message);
+            assertTrue(message.endsWith(" probes"), message);
+        }
+
+        @Test
+        @DisplayName("a step that merely lets the interrupt escape adds nothing to the timeout")
+        void aStepWithNothingToSayAddsNothing() {
+            Run run = run("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Slow
+                            uses: control.sleep
+                            duration: 30s
+                            timeout: 100ms
+                    """, "j");
+
+            assertEquals("timed out after 100ms", step(run, "Slow").message());
+        }
+
+        @Test
+        @DisplayName("the timeout is reported in the syntax the config wrote it in")
+        void theTimeoutReadsBackAsWritten() {
+            Run run = run("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Slow
+                            uses: control.sleep
+                            duration: 30s
+                            timeout: 1s
+                    """, "j");
+
+            assertEquals("timed out after 1s", step(run, "Slow").message());
+        }
+
+        @Test
         @DisplayName("on: timeout retries a timeout")
         void retryOnTimeout() {
             Run run = run("""
@@ -639,6 +696,45 @@ class JobRunnerTest {
     /**
      * Reports the logging context it was called with.
      */
+    /**
+     * A step that catches its own interrupt and reports how far it got.
+     */
+    private static final class StallingStep implements StepType<StallingStep.Config> {
+
+        public record Config() {
+        }
+
+        @Override
+        public String name() {
+            return "test.stall";
+        }
+
+        @Override
+        public Class<Config> configType() {
+            return Config.class;
+        }
+
+        @Override
+        public StepResult execute(Config config, RunContext ctx) {
+            int probes = 0;
+            while (true) {
+                probes++;
+                try {
+                    Thread.sleep(Duration.ofMillis(10));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return StepResult.failed("last status 503 after " + probes + " probes")
+                            .output("probes", (long) probes);
+                }
+            }
+        }
+
+        @Override
+        public String describe(Config config, RunContext ctx) {
+            return "would poll until cut off";
+        }
+    }
+
     private static final class RecordingStep implements StepType<RecordingStep.Config> {
 
         public record Config() {

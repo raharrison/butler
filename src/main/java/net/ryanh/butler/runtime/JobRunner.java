@@ -102,7 +102,8 @@ public final class JobRunner {
         MDC.put("job", job.name());
         try {
             Context ctx = Context.forRun(env, job, event, persisted.values(), runId(now), now);
-            List<Plan.Entry> discovered = Discovery.run(job, env.steps(), ctx);
+            // No deadline: adopting is not a run, so a step is held only to its own timeout.
+            List<Plan.Entry> discovered = Discovery.run(job, env.steps(), ctx, null);
 
             String dedupeKey = event.dedupeKey() == null
                     ? persisted.dedupeKey() : event.dedupeKey();
@@ -127,7 +128,7 @@ public final class JobRunner {
         Context ctx = Context.forRun(env, job, event, persisted.values(), id, started);
         Instant deadline = job.timeout() == null ? null : started.plus(job.timeout());
 
-        List<Plan.Entry> discovered = Discovery.run(job, env.steps(), ctx);
+        List<Plan.Entry> discovered = Discovery.run(job, env.steps(), ctx, deadline);
         List<Run.Step> steps = new ArrayList<>();
 
         Plan.Decision decision = decide(job, ctx);
@@ -241,7 +242,7 @@ public final class JobRunner {
                           Instant deadline, List<Run.Step> steps) {
         MDC.put("step", def.label());
         try {
-            Duration budget = budget(def.timeout(), deadline);
+            Duration budget = StepExecution.budget(def.timeout(), deadline);
             StepResolver.Resolved resolved =
                     StepResolver.resolve(def, job, env.steps(), ctx, budget);
 
@@ -283,7 +284,8 @@ public final class JobRunner {
 
         Executed executed = null;
         for (int attempt = 1; attempt <= allowed; attempt++) {
-            StepExecution.Attempt made = StepExecution.once(ready, budget(def.timeout(), deadline));
+            StepExecution.Attempt made =
+                    StepExecution.once(ready, StepExecution.budget(def.timeout(), deadline));
             executed = new Executed(made.result().attempts(attempt), made.timedOut());
             if (made.stranded()) {
                 log.warn("the step ignored its interrupt and is still running; it is no longer "
@@ -328,7 +330,7 @@ public final class JobRunner {
      * @return false if the wait was cut short, in which case there is no point trying again
      */
     private static boolean sleep(Duration delay, Instant deadline) {
-        Duration wait = budget(delay, deadline);
+        Duration wait = StepExecution.budget(delay, deadline);
         if (wait == null || wait.isNegative() || wait.isZero()) {
             return !expired(deadline);
         }
@@ -339,21 +341,6 @@ public final class JobRunner {
             Thread.currentThread().interrupt();
             return false;
         }
-    }
-
-    /**
-     * How long a step may take: its own timeout, or what is left of the job's, whichever runs out
-     * first. This is the whole of the job-level timeout; nothing races the run as a whole.
-     */
-    private static Duration budget(Duration own, Instant deadline) {
-        if (deadline == null) {
-            return own;
-        }
-        Duration remaining = Duration.between(Instant.now(), deadline);
-        if (remaining.isNegative()) {
-            remaining = Duration.ZERO;
-        }
-        return own == null || own.compareTo(remaining) > 0 ? remaining : own;
     }
 
     private static boolean expired(Instant deadline) {
@@ -395,8 +382,9 @@ public final class JobRunner {
     }
 
     /**
-     * Renders the message the job's notify policy would send. Delivering it needs a notifier
-     * implementation, which arrives with the rest of the v1 vocabulary in M4.
+     * Renders the job's notify policy and sends it. A channel that refuses the message is logged
+     * and no more: the run has already ended, and failing it now would report a deployment that
+     * worked as one that did not.
      */
     private Plan.Notification notify(JobDef job, Context ctx, Run.Status status) {
         if (job.notifyPolicy() == null) {
@@ -415,9 +403,15 @@ public final class JobRunner {
         if (template == null) {
             return null;
         }
+        String to = job.notifyPolicy().to();
         String message = ctx.resolve(template);
-        log.info("notify {}: {}", job.notifyPolicy().to(), message);
-        return new Plan.Notification(job.notifyPolicy().to(), message);
+        log.info("notify {}: {}", to, message);
+        try {
+            ctx.notifications().send(to, message);
+        } catch (Exception e) {
+            log.error("could not notify {}: {}", to, e.toString());
+        }
+        return new Plan.Notification(to, message);
     }
 
     /**

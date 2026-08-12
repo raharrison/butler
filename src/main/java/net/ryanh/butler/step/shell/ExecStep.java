@@ -39,12 +39,17 @@ public final class ExecStep implements StepType<ExecStep.Config> {
     }
 
     @Override
+    public List<String> locals() {
+        return List.of("stdout", "stderr", "exit_code");
+    }
+
+    @Override
     public StepResult execute(Config c, RunContext ctx) throws Exception {
         if (c.argv().isEmpty()) {
             return StepResult.failed("shell.exec needs an argv");
         }
         ProcessRunner.Command command = ctx.command().argv(c.argv());
-        return Outputs.of(ctx.processes().run(command), c.argv().getFirst());
+        return StepResult.of(ctx.processes().run(command), c.argv().getFirst());
     }
 
     @Override
@@ -67,6 +72,6 @@ public final class ExecStep implements StepType<ExecStep.Config> {
     @Override
     public List<String> preflight(Config c, RunContext ctx) {
         return c.argv().isEmpty() ? List.of()
-                : Outputs.preflight(ctx.command().workingDir(), c.argv().getFirst());
+                : Programs.preflight(ctx.command().workingDir(), c.argv().getFirst());
     }
 }

@@ -3,9 +3,8 @@ package net.ryanh.butler.testing;
 import net.ryanh.butler.config.ConfigLoader;
 import net.ryanh.butler.config.ConfigValidator;
 import net.ryanh.butler.config.Secrets;
-import net.ryanh.butler.runtime.RunEnvironment;
-import net.ryanh.butler.runtime.StateStore;
-import net.ryanh.butler.runtime.StepRegistry;
+import net.ryanh.butler.config.Vocabulary;
+import net.ryanh.butler.runtime.*;
 import net.ryanh.butler.spi.ProcessRunner;
 
 import java.nio.file.Path;
@@ -25,7 +24,8 @@ public final class Fixture {
      */
     public static ConfigLoader.Result config(String yaml, StepRegistry steps) {
         ConfigLoader.Result result = ConfigLoader.parse(yaml);
-        ConfigValidator.validate(result.config(), result.diagnostics(), steps.conditionParams());
+        ConfigValidator.validate(result.config(), result.diagnostics(),
+                Vocabulary.of(steps.vocabulary(), TriggerRegistry.discover().vocabulary()));
         return result;
     }
 
@@ -36,7 +36,13 @@ public final class Fixture {
 
     public static RunEnvironment environment(ConfigLoader.Result config, StepRegistry steps,
                                              Path stateDir, ProcessRunner processes) {
-        return new RunEnvironment(config.config(), steps, StateStore.at(stateDir), processes,
-                Secrets.none());
+        return environment(config, steps, stateDir, processes, NotifierRegistry.discover());
+    }
+
+    public static RunEnvironment environment(ConfigLoader.Result config, StepRegistry steps,
+                                             Path stateDir, ProcessRunner processes,
+                                             NotifierRegistry notifiers) {
+        return new RunEnvironment(config.config(), steps, notifiers, StateStore.at(stateDir),
+                processes, Secrets.none());
     }
 }
