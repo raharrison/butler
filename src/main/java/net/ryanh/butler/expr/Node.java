@@ -5,10 +5,9 @@ import java.util.List;
 /**
  * The expression AST.
  *
- * <p>Sealed on purpose. Node types are a genuinely closed set, so {@link Evaluator}'s switch has
- * no {@code default} branch and adding a node type makes the compiler point at every site that
- * must handle it. This is the only closed hierarchy in Butler - steps and triggers are
- * deliberately open.
+ * <p>Node types are a closed set, so {@link Evaluator}'s switch has no {@code default} branch and
+ * adding a node type makes the compiler point at every site that must handle it. This is the only
+ * sealed hierarchy in Butler; steps and triggers are open.
  */
 public sealed interface Node {
 

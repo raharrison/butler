@@ -9,9 +9,9 @@ import java.util.List;
  * the step's parameters, and the runtime binds the config's parameter keys to it. That record is
  * also where {@code butler steps} gets its schema, so documentation cannot drift from the code.
  *
- * <p>{@link #describe} has no default implementation on purpose. A step that cannot explain its
- * effect cannot be written, which is what makes {@code --dry-run} a property of the SPI rather
- * than a flag each step interprets for itself.
+ * <p>{@link #describe} has no default implementation: a step that cannot explain its effect cannot
+ * be written, so {@code --dry-run} is a property of the SPI rather than a flag each step interprets
+ * for itself.
  *
  * @param <C> the step's own parameter record
  */
@@ -30,7 +30,7 @@ public interface StepType<C> {
     StepResult execute(C config, RunContext ctx) throws Exception;
 
     /**
-     * A fully resolved account of the effect, for {@code --dry-run}. Required, deliberately.
+     * A fully resolved account of the effect, for {@code --dry-run}.
      */
     String describe(C config, RunContext ctx);
 

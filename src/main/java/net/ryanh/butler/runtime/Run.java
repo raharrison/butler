@@ -12,7 +12,7 @@ import java.util.Map;
  * One execution of a job for one event: what was observed, what was decided, what ran and how it
  * ended.
  *
- * <p>Shaped like {@link Plan} on purpose, so the rehearsal and the real thing read alike.
+ * <p>Shaped like {@link Plan}, so the rehearsal and the real thing read alike.
  *
  * @param failedStep the label of the step that ended the run, or null
  * @param message    why the run ended as it did, when there is something to say

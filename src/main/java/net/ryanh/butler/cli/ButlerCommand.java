@@ -45,8 +45,8 @@ public final class ButlerCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        // Validate before anything else: a daemon that starts on a broken config and silently
-        // does nothing is worse than one that refuses to start.
+        // Validate before anything else, so a broken config is refused rather than started with
+        // and then silently watched for nothing.
         var result = configOptions.loadAndValidate();
         var diags = result.diagnostics();
         if (!diags.isEmpty()) {
@@ -63,8 +63,8 @@ public final class ButlerCommand implements Callable<Integer> {
     }
 
     /**
-     * Runs until the process is asked to stop. A JVM shutdown hook is the whole signal design: it
-     * is what both the {@code TERM} systemd sends and the {@code INT} a terminal sends reach.
+     * Runs until the process is asked to stop. A JVM shutdown hook catches both the {@code TERM}
+     * systemd sends and the {@code INT} a terminal sends, so there is one path rather than two.
      * Draining what is in flight is {@link Butler#stop}'s job.
      */
     private int daemon() {

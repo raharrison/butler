@@ -23,6 +23,14 @@ public final class Diagnostics {
         items.add(new Diagnostic(Diagnostic.Severity.ERROR, path, sourceMap.locate(path), message));
     }
 
+    /**
+     * An error whose location is known directly rather than through a path. The parser is the only
+     * caller: a document that will not parse has no paths to look up.
+     */
+    public void errorAt(Diagnostic.Loc loc, String message) {
+        items.add(new Diagnostic(Diagnostic.Severity.ERROR, "", loc, message));
+    }
+
     public void warn(String path, String message) {
         items.add(new Diagnostic(Diagnostic.Severity.WARNING, path, sourceMap.locate(path), message));
     }

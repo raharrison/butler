@@ -90,10 +90,9 @@ public final class RegistryValidator {
     }
 
     /**
-     * Unknown parameter names are always caught, because that is the typo an author most often
-     * makes. Types are only checked when nothing is templated: a value like {@code ${vars.keep}}
-     * has no type until the run supplies one, and that is the point where binding happens for
-     * real (see {@link PlanBuilder}).
+     * Unknown parameter names are always caught. Types are only checked when nothing is templated:
+     * a value like {@code ${vars.keep}} has no type until the run supplies one, which is where
+     * binding happens for real (see {@link PlanBuilder}).
      */
     private static void parameters(String path, String uses, String kind,
                                    Map<String, Object> params, Class<?> configType,

@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,10 +47,32 @@ class PackagingTest {
         command.addAll(List.of(args));
 
         Process process = new ProcessBuilder(command).start();
-        String out = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        String err = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+        // Both pipes are drained at once: reading one to the end first would deadlock the jar as
+        // soon as it filled the other.
+        Reader out = read(process.getInputStream());
+        Reader err = read(process.getErrorStream());
         assertTrue(process.waitFor(2, TimeUnit.MINUTES), "the jar never exited");
-        return new Result(process.exitValue(), out, err);
+        return new Result(process.exitValue(), out.text(), err.text());
+    }
+
+    private record Reader(Thread thread, StringBuilder buffer) {
+
+        String text() throws InterruptedException {
+            thread.join();
+            return buffer.toString();
+        }
+    }
+
+    private static Reader read(InputStream stream) {
+        StringBuilder buffer = new StringBuilder();
+        Thread thread = Thread.ofVirtual().start(() -> {
+            try (stream) {
+                buffer.append(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+        return new Reader(thread, buffer);
     }
 
     @Test

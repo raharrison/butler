@@ -9,7 +9,7 @@ import net.ryanh.butler.spi.Watcher;
  * A job that only ever fires by hand, through {@code butler trigger}.
  *
  * <p>There is nothing to watch, so the watcher does nothing: the events come from the command
- * line, which is what makes this the trigger to test a pipeline with.
+ * line.
  */
 public final class ManualTrigger implements TriggerType<ManualTrigger.Config> {
 

@@ -35,7 +35,7 @@ public final class Evaluator {
     }
 
     private Object evalUncached(Node node) {
-        // No default branch: Node is sealed, so adding a node type breaks this switch on purpose.
+        // No default branch: Node is sealed, so adding a node type breaks this switch.
         return switch (node) {
             case Node.Lit lit -> lit.value();
             case Node.Var var -> resolve(var);

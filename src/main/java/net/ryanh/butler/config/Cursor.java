@@ -3,6 +3,8 @@ package net.ryanh.butler.config;
 import net.ryanh.butler.util.Durations;
 import net.ryanh.butler.util.Suggestions;
 
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
 
@@ -101,6 +103,24 @@ public final class Cursor {
         }
         diags.error(child(key), "expected true or false, found \"" + v + "\"");
         return fallback;
+    }
+
+    /**
+     * A filesystem path. Parsed here rather than by the caller so that text no filesystem can
+     * name is a diagnostic like any other, instead of an exception escaping a pass that is
+     * supposed to collect every problem at once.
+     */
+    public Path path(String key, Path fallback) {
+        String text = string(key, null);
+        if (text == null) {
+            return fallback;
+        }
+        try {
+            return Path.of(text);
+        } catch (InvalidPathException e) {
+            diags.error(child(key), "not a usable path: \"" + text + "\" (" + e.getReason() + ")");
+            return fallback;
+        }
     }
 
     public Duration duration(String key, Duration fallback) {
@@ -283,7 +303,6 @@ public final class Cursor {
 
     /**
      * Reports every key the schema did not read, suggesting the closest key it did know about.
-     * Most config bugs are typos, so this is the highest-value message in the product.
      */
     public void rejectUnknownKeys() {
         for (String k : map.keySet()) {

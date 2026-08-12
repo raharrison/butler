@@ -194,6 +194,53 @@ class DiagnosticsTest {
                     """);
             assertAt(d, 2, "at least 1");
         }
+
+        @Test
+        @DisplayName("a negative retention count would delete every run record ever written")
+        void retentionCountMustNotBeNegative() {
+            var d = only("""
+                    settings:
+                      run_retention: {count: -1}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            assertAt(d, 2, "must not be negative");
+        }
+
+        @Test
+        @DisplayName("text no filesystem can name is a diagnostic, not an exception escaping the "
+                + "pass that collects every problem at once")
+        void anUnusablePathIsReportedLikeAnythingElse() {
+            // A NUL is the one character no filesystem accepts, so this is the same mistake on
+            // every platform. What reaches it varies: a colon is a legal Linux path and an
+            // illegal Windows one, and a config is often validated somewhere other than its host.
+            var d = only("""
+                    settings:
+                      state_dir: "\\0"
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            assertAt(d, 2, "not a usable path");
+        }
+
+        @Test
+        @DisplayName("and the rest of the file is still reported alongside it")
+        void anUnusablePathDoesNotSwallowTheOtherProblems() {
+            var diags = loadAndValidate("""
+                    settings:
+                      state_dir: "\\0"
+                      max_concurrent_runs: 0
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """).diagnostics();
+            assertEquals(2, diags.all().size(), diags.render("test.yaml"));
+        }
     }
 
     @Nested
@@ -764,29 +811,46 @@ class DiagnosticsTest {
 
         @Test
         void reportsRatherThanCrashing() {
-            var diags = loadAndValidate("""
+            var d = only("""
                     jobs:
                       j:
                        on: [
-                    """).diagnostics();
-            assertTrue(diags.hasErrors());
-            assertTrue(diags.render("x").contains("could not parse YAML"), diags.render("x"));
+                    """);
+            assertTrue(d.message().contains("could not parse YAML"), d.message());
+        }
+
+        @Test
+        @DisplayName("a syntax error points at the line it is on, not at the top of the file")
+        void aParseErrorCarriesItsLocation() {
+            //                                                1  2  3  4  5  6  7
+            var d = only("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                            message: hi
+                            env: { TOKEN: ${secret.API_TOKEN} }
+                    """);
+            // An unquoted ${...} inside a flow mapping is closed by its own brace, which is a
+            // plausible mistake and useless to report at 1:1.
+            assertAt(d, 7, "could not parse YAML");
+            assertTrue(d.message().contains("flow mapping"), d.message());
         }
 
         @Test
         void duplicateKeysAreRejected() {
             // Without strict duplicate detection this resolves last-one-wins and the author's
             // first value silently disappears.
-            var diags = loadAndValidate("""
+            var d = only("""
                     jobs:
                       j:
                         on: [{uses: manual}]
                         timeout: 1m
                         timeout: 2m
                         steps: [{uses: control.log}]
-                    """).diagnostics();
-            assertTrue(diags.hasErrors());
-            assertTrue(diags.render("x").toLowerCase().contains("duplicate"), diags.render("x"));
+                    """);
+            assertAt(d, 5, "Duplicate Object property \"timeout\"");
         }
     }
 

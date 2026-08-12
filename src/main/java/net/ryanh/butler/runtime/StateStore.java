@@ -1,5 +1,6 @@
 package net.ryanh.butler.runtime;
 
+import net.ryanh.butler.util.Literals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.core.type.TypeReference;
@@ -8,13 +9,12 @@ import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -97,41 +97,47 @@ public final class StateStore {
         if (raw == null) {
             return JobState.empty();
         }
-        return new JobState(text(raw.get("dedupe_key")), instant(raw.get("last_run")),
+        return new JobState(asString(raw.get("dedupe_key")), instant(raw.get("last_run")),
                 values(raw.get("state")));
     }
 
     /**
      * Writes a job's state, replacing whatever was there.
-     *
-     * <p>Temp file then {@code ATOMIC_MOVE}, so a crash mid-write leaves the previous state intact
-     * rather than half a document.
      */
     public void write(String job, JobState state) throws IOException {
-        Path file = fileFor(job);
-        Files.createDirectories(file.getParent());
-
         Map<String, Object> document = new LinkedHashMap<>();
         document.put("dedupe_key", state.dedupeKey());
         document.put("last_run", state.lastRun() == null ? null : state.lastRun().toString());
-        document.put("state", state.values());
+        document.put("state", storable(state.values()));
 
-        Path temp = Files.createTempFile(file.getParent(), file.getFileName().toString(), ".tmp");
-        try {
-            Files.writeString(temp, MAPPER.writeValueAsString(document) + "\n");
-            try {
-                Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                // Some filesystems cannot; a plain replace still beats a partial write.
-                Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } finally {
-            Files.deleteIfExists(temp);
-        }
+        Atomically.write(fileFor(job), MAPPER.writeValueAsString(document) + "\n");
     }
 
-    private static String text(Object value) {
+    /**
+     * A value the next run will read back as the one that was written.
+     *
+     * <p>An expression yields more than JSON has scalars for: {@code semver(...)} produces a
+     * version and {@code ${30s}} a duration, and databind would write the first as {@code {}} and
+     * the second in a syntax {@code Durations} refuses. Both are stored as the text they render
+     * to, which is what the run report showed and what a condition compares against anyway.
+     */
+    private static Object storable(Object value) {
+        return switch (value) {
+            case null -> null;
+            case String s -> s;
+            case Number n -> n;
+            case Boolean b -> b;
+            case Map<?, ?> m -> {
+                Map<String, Object> out = new LinkedHashMap<>();
+                m.forEach((k, v) -> out.put(String.valueOf(k), storable(v)));
+                yield out;
+            }
+            case List<?> l -> l.stream().map(StateStore::storable).toList();
+            default -> Literals.text(value);
+        };
+    }
+
+    private static String asString(Object value) {
         return value == null ? null : String.valueOf(value);
     }
 

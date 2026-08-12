@@ -46,6 +46,12 @@ public final class Butler {
     private final List<InFlight> runs = new ArrayList<>();
     private final CountDownLatch stopped = new CountDownLatch(1);
 
+    /**
+     * Guarded by {@link #runs}, so an event arriving as the drain takes its snapshot is either in
+     * that snapshot or refused, never a run nothing waits for.
+     */
+    private boolean stopping;
+
     public Butler(RunEnvironment env, TriggerRegistry triggers, boolean dryRun, PrintStream out) {
         this.env = env;
         this.triggers = triggers;
@@ -96,11 +102,14 @@ public final class Butler {
      * runs would hold shutdown open for ten times as long.
      */
     public void stop() {
-        watchers.forEach(Watcher::stop);
+        // A watcher part-way through emitting could otherwise add a run just after the snapshot,
+        // and the drain would leave it to be killed halfway.
         List<InFlight> inFlight;
         synchronized (runs) {
+            stopping = true;
             inFlight = List.copyOf(runs);
         }
+        watchers.forEach(Watcher::stop);
         if (inFlight.isEmpty()) {
             finish();
             return;
@@ -165,14 +174,18 @@ public final class Butler {
     /**
      * One event, on its own virtual thread, so a watcher is never held up by the run it caused.
      *
-     * <p>The concurrency gate is entered before the global permit rather than after it: an event
-     * waiting its turn within its own group has no business occupying a slot another job could use.
+     * <p>The concurrency gate is entered before the global permit rather than after it, so an event
+     * waiting its turn within its own group does not hold a slot another job could use.
      */
     private void handle(JobDef job, Event event) {
         Cancellation cancel = new Cancellation();
         Thread thread = Thread.ofVirtual().name("run-" + job.name())
                 .unstarted(() -> admitted(job, event, cancel));
         synchronized (runs) {
+            if (stopping) {
+                log.info("job {} is not starting this event: butler is shutting down", job.name());
+                return;
+            }
             runs.add(new InFlight(thread, cancel));
         }
         thread.start();
@@ -181,9 +194,19 @@ public final class Butler {
     /**
      * Waits for this event's turn in its group, then runs it. The thread takes itself off the
      * in-flight list however it ends, so a shutdown drain waits only for what is still going.
+     *
+     * <p>Dedupe is asked before the gate. What it turns away is not a run (DESIGN.md §6.4), so it
+     * must not take a place in the group first: under {@code queue} it would wait out whatever is
+     * deploying, and under {@code cancel_previous} it would displace it. A dry run asks nothing,
+     * because reporting every firing is the point of one.
      */
     private void admitted(JobDef job, Event event, Cancellation cancel) {
         try {
+            if (!dryRun && !JobRunner.isNewWork(env, job, event)) {
+                log.info("job {} has already processed this event, dropping it (dedupe key {})",
+                        job.name(), event.dedupeKey());
+                return;
+            }
             ConcurrencyGate.Admission admission = gate.enter(job, cancel);
             if (!admission.admitted()) {
                 log.info("job {} did not run this event: {}", job.name(), admission.reason());

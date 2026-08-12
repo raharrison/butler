@@ -3,12 +3,6 @@ package net.ryanh.butler;
 import net.ryanh.butler.cli.ButlerCommand;
 import picocli.CommandLine;
 
-/**
- * Entry point.
- *
- * <p>Deliberately the conventional {@code main(String[] args)} rather than the compact no-arg
- * form: Butler's entire interface is arguments, and the no-arg form cannot see them.
- */
 public final class Main {
 
     private Main() {

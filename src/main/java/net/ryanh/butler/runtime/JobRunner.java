@@ -8,6 +8,7 @@ import net.ryanh.butler.expr.ExprException;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.spi.StepResult;
 import net.ryanh.butler.util.Durations;
+import net.ryanh.butler.util.Literals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -55,9 +56,13 @@ public final class JobRunner {
      * Whether this event is new work. A key that matches the last one processed means the job has
      * already seen it, and is how a restart does not redo everything (DESIGN.md §6.4).
      */
-    public boolean isNewWork(JobDef job, Event event) {
+    public static boolean isNewWork(RunEnvironment env, JobDef job, Event event) {
         String key = event.dedupeKey();
         return key == null || !key.equals(env.state().read(job.name()).dedupeKey());
+    }
+
+    public boolean isNewWork(JobDef job, Event event) {
+        return isNewWork(env, job, event);
     }
 
     /**
@@ -99,9 +104,8 @@ public final class JobRunner {
      * whatever is already present: the install-time step on a host that is already serving
      * (DESIGN.md §6.3).
      *
-     * <p>Both halves matter. Without the state the first event judges against nothing; without the
-     * dedupe key an artifact already sitting in the watch directory fires the moment the daemon
-     * starts.
+     * <p>Without the state the first event judges against nothing; without the dedupe key an
+     * artifact already sitting in the watch directory fires the moment the daemon starts.
      */
     public Adoption adopt(JobDef job, Event candidate) {
         Instant now = Instant.now();
@@ -119,12 +123,7 @@ public final class JobRunner {
                     ? persisted.dedupeKey() : event.dedupeKey();
             StateStore.JobState state =
                     new StateStore.JobState(dedupeKey, now, ctx.state());
-            try {
-                env.state().write(job.name(), state);
-            } catch (IOException e) {
-                log.error("could not write state to {}: {}", env.state().fileFor(job.name()),
-                        e.toString());
-            }
+            remember(job, state);
             return new Adoption(job.name(), discovered, state.values(), dedupeKey);
         } finally {
             MDC.remove("run_id");
@@ -313,7 +312,8 @@ public final class JobRunner {
      */
     private Executed attempts(StepDef def, StepResolver.Ready ready, Instant deadline) {
         RetryDef retry = def.retry();
-        int allowed = retry == null ? 1 : retry.attempts();
+        // A policy of no attempts would run nothing and produce no result to report.
+        int allowed = retry == null ? 1 : Math.max(1, retry.attempts());
 
         Executed executed = null;
         for (int attempt = 1; attempt <= allowed; attempt++) {
@@ -460,14 +460,21 @@ public final class JobRunner {
         Map<String, Object> values = new LinkedHashMap<>(ctx.state());
         values.putAll(persist);
 
-        StateStore.JobState state = new StateStore.JobState(
+        remember(job, new StateStore.JobState(
                 event.dedupeKey() == null ? previous.dedupeKey() : event.dedupeKey(),
-                Instant.now(), values);
+                Instant.now(), values));
+    }
+
+    /**
+     * Writes what a job now knows. A state file that cannot be written is a log line and no more:
+     * it is a cache of host reality, and discovery re-derives it on the next event.
+     */
+    private void remember(JobDef job, StateStore.JobState state) {
         try {
             env.state().write(job.name(), state);
-        } catch (IOException e) {
-            log.error("could not write state to {}: {}", env.state().fileFor(job.name()),
-                    e.toString());
+        } catch (IOException | RuntimeException e) {
+            log.error("could not write state to {}: {}",
+                    Literals.path(env.state().fileFor(job.name())), e.toString());
         }
     }
 

@@ -1,7 +1,9 @@
 package net.ryanh.butler.config;
 
 import net.ryanh.butler.config.model.*;
+import tools.jackson.core.JacksonException;
 import tools.jackson.core.StreamReadFeature;
+import tools.jackson.core.TokenStreamLocation;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
@@ -59,7 +61,7 @@ public final class ConfigLoader {
             root = mapper.readValue(yaml, new TypeReference<LinkedHashMap<String, Object>>() {
             });
         } catch (RuntimeException e) {
-            diags.error("", "could not parse YAML: " + rootCause(e));
+            reportParseFailure(e, diags);
             return new Result(null, diags, yaml);
         }
         if (root == null) {
@@ -98,13 +100,48 @@ public final class ConfigLoader {
                 .allMatch(l -> l.isEmpty() || l.startsWith("#") || l.equals("---") || l.equals("..."));
     }
 
-    private static String rootCause(Throwable t) {
+    /**
+     * A document that will not parse has no paths for the {@link SourceMap} to look up, so the
+     * location comes off the exception instead; otherwise every syntax error would be reported at
+     * the top of the file.
+     */
+    private static void reportParseFailure(RuntimeException e, Diagnostics diags) {
+        String message = "could not parse YAML: " + explain(e);
+        if (e instanceof JacksonException jackson && jackson.getLocation() != null) {
+            TokenStreamLocation at = jackson.getLocation();
+            diags.errorAt(new Diagnostic.Loc(at.getLineNr(), at.getColumnNr()), message);
+            return;
+        }
+        diags.error("", message);
+    }
+
+    /**
+     * The parser says what went wrong, then quotes the offending line and points at it, then often
+     * says what it expected instead. The quoted line is already on screen and the caret is aligned
+     * to nothing once the message is indented, so the sentences are kept and the rest dropped.
+     */
+    private static String explain(Throwable t) {
         Throwable cause = t;
         while (cause.getCause() != null && cause.getCause() != cause) {
             cause = cause.getCause();
         }
-        String msg = cause.getMessage();
-        return msg == null ? cause.getClass().getSimpleName() : msg.split("\n")[0];
+        String message = cause.getMessage();
+        if (message == null || message.isBlank()) {
+            return cause.getClass().getSimpleName();
+        }
+        List<String> sentences = new ArrayList<>();
+        for (String line : message.split("\n")) {
+            String stripped = line.strip();
+            if (stripped.isEmpty() || stripped.startsWith("^") || stripped.startsWith("in reader,")
+                    || stripped.startsWith("at [Source:")) {
+                continue;
+            }
+            // Anything left that is not a sentence is the quoted source line, which follows one.
+            if (sentences.isEmpty() || stripped.startsWith("expected ")) {
+                sentences.add(stripped);
+            }
+        }
+        return sentences.isEmpty() ? message.split("\n")[0] : String.join("; ", sentences);
     }
 
     // ------------------------------------------------------------------ document
@@ -137,7 +174,7 @@ public final class ConfigLoader {
 
     private static ButlerConfig.Settings settings(Cursor c) {
         ButlerConfig.Settings d = ButlerConfig.Settings.defaults();
-        String stateDir = c.string("state_dir", d.stateDir().toString());
+        Path stateDir = c.path("state_dir", d.stateDir());
         Enums.LogFormat logFormat = c.enumValue("log_format", Enums.LogFormat.class, d.logFormat());
         int maxRuns = c.integer("max_concurrent_runs", d.maxConcurrentRuns());
         Duration poll = c.duration("poll_interval", d.pollInterval());
@@ -149,24 +186,27 @@ public final class ConfigLoader {
                 rc.duration("age", d.runRetention().age()));
         rc.rejectUnknownKeys();
 
-        String plugins = c.string("plugins_dir", null);
+        Path plugins = c.path("plugins_dir", null);
         c.rejectUnknownKeys();
 
         if (maxRuns < 1) {
             c.diagnostics().error("/settings/max_concurrent_runs",
                     "must be at least 1, found " + maxRuns);
         }
+        if (retention.count() < 0) {
+            c.diagnostics().error("/settings/run_retention/count",
+                    "must not be negative, found " + retention.count());
+        }
         return new ButlerConfig.Settings(
-                Path.of(stateDir), logFormat, maxRuns, poll, grace, retention,
-                plugins == null ? null : Path.of(plugins));
+                stateDir, logFormat, maxRuns, poll, grace, retention, plugins);
     }
 
     private static ButlerConfig.SecretsConfig secrets(Cursor c) {
         ButlerConfig.SecretsConfig d = ButlerConfig.SecretsConfig.defaults();
         boolean fromEnv = c.bool("from_env", d.fromEnv());
-        String file = c.string("file", null);
+        Path file = c.path("file", null);
         c.rejectUnknownKeys();
-        return new ButlerConfig.SecretsConfig(fromEnv, file == null ? null : Path.of(file));
+        return new ButlerConfig.SecretsConfig(fromEnv, file);
     }
 
     private static NotifierDef notifier(String name, Cursor c) {

@@ -19,6 +19,20 @@ public final class Literals {
         return switch (value) {
             case null -> "null";
             case String s -> "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+            default -> text(value);
+        };
+    }
+
+    /**
+     * The same value unquoted: what interpolating {@code ${...}} produces, and what a value with
+     * no JSON form of its own is persisted as.
+     *
+     * <p>One renderer rather than two, so a duration cannot be {@code 30s} in a run report and
+     * {@code PT30S} in the state file the next run reads back.
+     */
+    public static String text(Object value) {
+        return switch (value) {
+            case null -> null;
             case Duration d -> Durations.format(d);
             case Path p -> path(p);
             default -> String.valueOf(value);

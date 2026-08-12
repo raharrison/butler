@@ -4,8 +4,7 @@ import java.util.Collection;
 import java.util.Locale;
 
 /**
- * "did you mean" hints for unknown keys, functions and names. Most config mistakes are typos, so
- * these earn their keep.
+ * "did you mean" hints for unknown keys, functions and names.
  */
 public final class Suggestions {
 

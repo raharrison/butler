@@ -10,9 +10,8 @@ import java.util.Map;
  * Renders a {@link Plan} as the dry-run report of DESIGN.md §5.5.
  *
  * <p>The output is deterministic: nothing that varies between runs of the same config reaches it,
- * which is what makes the rendered plan a golden file and a diff in it the clearest review
- * artefact for a config change. It is also plain ASCII, because a plan is read through pipes,
- * redirects and CI logs as often as on a terminal.
+ * so the rendered plan can be snapshot-tested as a golden file. It is plain ASCII, because a plan
+ * is read through pipes, redirects and CI logs as often as on a terminal.
  */
 public final class PlanRenderer {
 

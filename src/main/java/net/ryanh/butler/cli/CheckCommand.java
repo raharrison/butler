@@ -11,8 +11,10 @@ import picocli.CommandLine.Mixin;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.regex.Pattern;
 
@@ -173,7 +175,26 @@ public final class CheckCommand implements Callable<Integer> {
     }
 
     private static void kv(StringBuilder sb, int depth, String key, Object value) {
-        indent(sb, depth).append(key).append(": ").append(scalar(value)).append('\n');
+        indent(sb, depth).append(key).append(": ").append(value(value)).append('\n');
+    }
+
+    /**
+     * A value as YAML. Collections take the flow form, so {@code expect_status: [200, 204]} reads
+     * back as the list it is rather than as a string that happens to have brackets in it.
+     */
+    private static String value(Object v) {
+        if (v instanceof List<?> items) {
+            List<String> rendered = new ArrayList<>(items.size());
+            items.forEach(item -> rendered.add(value(item)));
+            return "[" + String.join(", ", rendered) + "]";
+        }
+        if (v instanceof Map<?, ?> entries) {
+            List<String> rendered = new ArrayList<>(entries.size());
+            entries.forEach((k, item) ->
+                    rendered.add(scalar(String.valueOf(k)) + ": " + value(item)));
+            return "{" + String.join(", ", rendered) + "}";
+        }
+        return scalar(v);
     }
 
     private static String scalar(Object v) {

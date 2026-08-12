@@ -178,12 +178,13 @@ secrets in the environment or a separate secrets file rather than inline, and tr
 it as equivalent to running commands as the `butler` user.
 
 Butler itself runs unprivileged. Steps that need root go through a narrow `NOPASSWD` sudoers
-allowlist, one line per unit and verb - never `systemctl *`. `butler --dry-run` warns when a
-`systemd.*` step has no matching rule, which turns a 3am failure into a dry-run warning. There is
-[a sample snippet](packaging/butler.sudoers) to copy.
+allowlist, one line per unit and verb - never `systemctl *`. Only the verbs that change a unit need
+one; `is-active` and `show` are read-only and run as the daemon's own user. `butler --dry-run`
+warns when a `systemd.*` step has no matching rule, which turns a 3am failure into a dry-run
+warning. There is [a sample snippet](packaging/butler.sudoers) to copy.
 
 Secrets are **not redacted** from logs or captured process output in v1. The guidance is not to
-echo them; see DESIGN.md §11.
+echo them; see [DESIGN.md §11](docs/DESIGN.md).
 
 ## Documentation
 
@@ -191,8 +192,7 @@ echo them; see DESIGN.md §11.
 |------------------------------------------------|--------------------------------------------------------------------------------------------|
 | [docs/configuration.md](docs/configuration.md) | The config reference: every key, the expression language, the step and trigger vocabulary. |
 | [docs/operating.md](docs/operating.md)         | systemd, install layout, sudoers, logging, the state directory, plugins.                   |
-| [DESIGN.md](DESIGN.md)                         | Why it is shaped this way. Authoritative for the model.                                    |
-| [plans/](plans/README.md)                      | The milestone plans, and which are built.                                                  |
+| [docs/DESIGN.md](docs/DESIGN.md)               | Why it is shaped this way. Authoritative for the model, and what is deliberately absent.   |
 
 `butler steps` is generated from the registry, so it documents the vocabulary this build actually
 has rather than the one the docs were written against.
@@ -204,6 +204,6 @@ has rather than the one the docs were written against.
 ./gradlew shadowJar             # build/libs/butler-1.0-SNAPSHOT-all.jar
 ```
 
-Java 25, Gradle 9. Five dependencies: picocli, Jackson, SLF4J, Logback and (test-only) JUnit and
-ArchUnit. `ArchitectureTest` pins the package layering that keeps the runtime ignorant of what any
-individual step does.
+Java 25, Gradle 9. Four dependencies at runtime: picocli, Jackson, SLF4J and Logback. Tests add
+JUnit and ArchUnit, and `ArchitectureTest` pins the package layering that keeps the runtime
+ignorant of what any individual step does.

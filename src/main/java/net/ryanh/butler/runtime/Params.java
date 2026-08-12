@@ -1,6 +1,7 @@
 package net.ryanh.butler.runtime;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import net.ryanh.butler.util.Cron;
 import net.ryanh.butler.util.Durations;
 import net.ryanh.butler.util.Literals;
 import tools.jackson.core.JsonParser;
@@ -12,20 +13,21 @@ import tools.jackson.databind.module.SimpleModule;
 import java.lang.reflect.RecordComponent;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 /**
  * Binds a step's or trigger's raw parameter map to its own config record.
  *
- * <p>This is the one place databind does any work. Config loading deliberately avoids it, because
- * it throws on the first mismatch and the loader must report every problem at once; here failing
- * fast on one step is exactly right, and the caller turns the failure into a diagnostic with a
- * file, line and column.
+ * <p>This is the one place databind does any work. Config loading avoids it, because it throws on
+ * the first mismatch and the loader must report every problem at once. Here the failure stops at
+ * one step, and the caller turns it into a diagnostic with a file, line and column.
  *
  * <p>Config keys are snake_case, so the mapper carries the matching naming strategy and
  * {@link #names} asks that same strategy how a component is spelled - one source of truth for the
@@ -55,37 +57,47 @@ public final class Params {
     }
 
     /**
-     * The two scalars with a syntax of their own to report on. A {@link Duration} parameter takes
-     * {@code 30s} rather than ISO-8601, through the same converter the loader uses, and a
-     * {@link Pattern} parameter is compiled here so a bad regex is a diagnostic rather than a
-     * watcher that dies at startup.
+     * The scalars with a syntax of their own to report on. Each is parsed here rather than by the
+     * step or trigger that takes it, which is what turns a malformed one into a diagnostic with a
+     * file, line and column instead of a watcher that dies the moment the daemon starts.
+     *
+     * <p>A {@link Duration} takes {@code 30s} rather than ISO-8601, through the same converter the
+     * loader uses.
      */
     private static SimpleModule butlerScalars() {
         SimpleModule module = new SimpleModule("butler-scalars");
-        module.addDeserializer(Duration.class, new ValueDeserializer<Duration>() {
-            @Override
-            public Duration deserialize(JsonParser p, DeserializationContext ctxt) {
-                try {
-                    return Durations.parse(p.getString());
-                } catch (IllegalArgumentException e) {
-                    throw new BindingException(e.getMessage());
-                }
+        module.addDeserializer(Duration.class, scalar(Durations::parse));
+        module.addDeserializer(Cron.class, scalar(Cron::parse));
+        module.addDeserializer(ZoneId.class, scalar(text ->
+                text == null || text.isBlank() ? ZoneId.systemDefault() : ZoneId.of(text)));
+        module.addDeserializer(Pattern.class, scalar(source -> {
+            try {
+                return Pattern.compile(source);
+            } catch (PatternSyntaxException e) {
+                throw new IllegalArgumentException(Literals.of(source)
+                        + " is not a usable regular expression: " + e.getDescription()
+                        + " near index " + e.getIndex());
             }
-        });
-        module.addDeserializer(Pattern.class, new ValueDeserializer<Pattern>() {
-            @Override
-            public Pattern deserialize(JsonParser p, DeserializationContext ctxt) {
-                String source = p.getString();
-                try {
-                    return Pattern.compile(source);
-                } catch (PatternSyntaxException e) {
-                    throw new BindingException(Literals.of(source)
-                            + " is not a usable regular expression: " + e.getDescription()
-                            + " near index " + e.getIndex());
-                }
-            }
-        });
+        }));
         return module;
+    }
+
+    /**
+     * A deserializer for a scalar with its own parser, reporting a refusal the way every other
+     * binding failure is reported.
+     */
+    private static <T> ValueDeserializer<T> scalar(Function<String, T> parse) {
+        return new ValueDeserializer<>() {
+            @Override
+            public T deserialize(JsonParser p, DeserializationContext ctxt) {
+                try {
+                    return parse.apply(p.getString());
+                } catch (RuntimeException e) {
+                    throw new BindingException(e.getMessage() == null
+                            ? e.toString() : e.getMessage());
+                }
+            }
+        };
     }
 
     /**

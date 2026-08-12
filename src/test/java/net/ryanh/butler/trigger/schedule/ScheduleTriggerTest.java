@@ -4,6 +4,7 @@ import net.ryanh.butler.runtime.Triggering;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.spi.TriggerContext;
 import net.ryanh.butler.spi.Watcher;
+import net.ryanh.butler.util.Cron;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -213,7 +214,7 @@ class ScheduleTriggerTest {
         @DisplayName("schedule.cron fires when the expression comes round")
         void cronFires() throws Exception {
             Watcher watcher = new CronTrigger().start(
-                    new CronTrigger.Config("* * * * *", "UTC"), fired::add, ctx);
+                    new CronTrigger.Config(Cron.parse("* * * * *"), ZoneId.of("UTC")), fired::add, ctx);
             try {
                 // Not waiting a minute for it: what matters here is that it starts, computes a
                 // next firing and stops cleanly.
@@ -225,9 +226,18 @@ class ScheduleTriggerTest {
         }
 
         @Test
-        void aBadCronExpressionIsRefusedWhenTheWatcherStarts() {
+        @DisplayName("no expression is refused on the caller's thread, not by a watch thread that "
+                + "dies leaving the daemon claiming to watch the job")
+        void anExpressionIsRequiredBeforeTheWatcherStarts() {
             assertThrows(IllegalArgumentException.class, () -> new CronTrigger().start(
-                    new CronTrigger.Config("not a cron", null), fired::add, ctx));
+                    new CronTrigger.Config(null, null), fired::add, ctx));
+        }
+
+        @Test
+        @DisplayName("no timezone means the host's own")
+        void theDefaultZoneIsTheHostsOwn() {
+            assertEquals(ZoneId.systemDefault(),
+                    new CronTrigger.Config(Cron.parse("* * * * *"), null).timezone());
         }
 
         @Test
@@ -236,7 +246,7 @@ class ScheduleTriggerTest {
             assertEquals(List.of(), new EveryTrigger().current(
                     new EveryTrigger.Config(Duration.ofMinutes(1)), ctx));
             assertEquals(List.of(), new CronTrigger().current(
-                    new CronTrigger.Config("* * * * *", null), ctx));
+                    new CronTrigger.Config(Cron.parse("* * * * *"), null), ctx));
         }
     }
 }

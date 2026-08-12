@@ -225,6 +225,29 @@ class CliTest {
         }
 
         @Test
+        @DisplayName("a list reads back as a list, not as a string with brackets in it")
+        void rendersCollectionsInFlowForm() throws IOException {
+            Path p = write("lists.yaml", """
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: http.request
+                            url: http://localhost:8080/health
+                            expect_status: [200, 204]
+                            headers: {Accept: application/json}
+                        notify: {to: ops, on: [success, failure], success: done}
+                    notifiers:
+                      ops: {uses: notify.webhook, url: http://localhost:9000/hook}
+                    """);
+            assertEquals(0, Main.run("check", "-c", p.toString()), stderr());
+            String s = stdout();
+            assertTrue(s.contains("expect_status: [200, 204]"), s);
+            assertTrue(s.contains("headers: {Accept: application/json}"), s);
+            assertTrue(s.contains("on: [success, failure]"), s);
+        }
+
+        @Test
         void refusesToPrintAnInvalidConfig() throws IOException {
             Path p = write("bad.yaml", "jobs:\n  j:\n    steps: [{uses: control.log}]\n");
             assertEquals(1, Main.run("check", "-c", p.toString()));
@@ -246,7 +269,8 @@ class CliTest {
 
         @Test
         void acceptsAValidConfig() throws IOException {
-            // --check-only stands in for the daemon loop, which lands in M4.
+            // --check-only stops where the daemon would start watching, which a test cannot
+            // otherwise get past: on a good config the bare invocation runs until it is signalled.
             assertEquals(0, Main.run("-c", fixture("plan.yaml").toString(), "--check-only"));
         }
     }

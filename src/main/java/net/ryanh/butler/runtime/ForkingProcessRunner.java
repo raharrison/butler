@@ -66,9 +66,8 @@ public final class ForkingProcessRunner implements ProcessRunner {
             }
         } catch (InterruptedException e) {
             // Being interrupted means the run is cancelling this step, so the process goes; what it
-            // printed before that is still the most useful thing about the failure and is reported
-            // rather than thrown away. Cleanup needs a thread that is not already interrupted, so
-            // the flag is cleared here and restored before returning.
+            // printed before that is reported rather than thrown away. Cleanup needs a thread that
+            // is not already interrupted, so the flag is cleared here and restored before returning.
             Thread.interrupted();
             timedOut = true;
             kill(process);
@@ -146,7 +145,7 @@ public final class ForkingProcessRunner implements ProcessRunner {
     private record Drain(Thread thread, Ring ring) {
         /**
          * The pipes close when the process dies, so this ends on its own; an interrupt here would
-         * cost the output that has already been read for nothing.
+         * discard output that has already been read.
          */
         void join() {
             try {

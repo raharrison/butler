@@ -1,8 +1,7 @@
-package net.ryanh.butler.trigger.schedule;
+package net.ryanh.butler.util;
 
 import java.time.DayOfWeek;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.BitSet;
@@ -197,11 +196,6 @@ public final class Cron {
 
     private static int dayOfWeek(DayOfWeek day) {
         return day == DayOfWeek.SUNDAY ? 0 : day.getValue();
-    }
-
-    public static ZoneId zone(String timezone) {
-        return timezone == null || timezone.isBlank() ? ZoneId.systemDefault()
-                : ZoneId.of(timezone);
     }
 
     @Override

@@ -1,6 +1,6 @@
 package net.ryanh.butler.expr;
 
-import net.ryanh.butler.util.Durations;
+import net.ryanh.butler.util.Literals;
 import net.ryanh.butler.util.Semver;
 import net.ryanh.butler.util.Suggestions;
 
@@ -172,9 +172,7 @@ public final class Functions {
     }
 
     static String str(Object v) {
-        if (v == null) return null;
-        if (v instanceof Duration d) return Durations.format(d);
-        return String.valueOf(v);
+        return Literals.text(v);
     }
 
 }

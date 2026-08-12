@@ -1,5 +1,7 @@
 package net.ryanh.butler.step.shell;
 
+import net.ryanh.butler.util.Literals;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -19,7 +21,7 @@ final class Programs {
     static List<String> preflight(Path workingDir, String program) {
         List<String> warnings = new ArrayList<>();
         if (workingDir != null && !Files.isDirectory(workingDir)) {
-            warnings.add("working_dir does not exist: " + workingDir);
+            warnings.add("working_dir does not exist: " + Literals.path(workingDir));
         }
         Path path = Path.of(program);
         if (path.isAbsolute() && !Files.isExecutable(path)) {

@@ -46,8 +46,8 @@ public final class SourceMap {
      * Paths where the document referred to a YAML anchor, in source order.
      *
      * <p>The parser reports an alias as a scalar whose text is the anchor's name, so
-     * {@code copy: *base} would bind the string "base" and nobody would ever know. Only this pass
-     * can tell the difference, which is why it collects them for the loader to reject.
+     * {@code copy: *base} would bind the string "base". Only this pass can tell an alias from a
+     * scalar, so it collects them for the loader to reject.
      */
     public List<String> aliases() {
         return aliases;

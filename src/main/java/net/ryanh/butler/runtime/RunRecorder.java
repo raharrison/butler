@@ -10,7 +10,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -115,22 +118,7 @@ public final class RunRecorder {
     // --------------------------------------------------------------------------- writing
 
     private synchronized void write(Run run) throws IOException {
-        Path file = fileFor(run);
-        Files.createDirectories(file.getParent());
-
-        Path temp = Files.createTempFile(file.getParent(), file.getFileName().toString(), ".tmp");
-        try {
-            Files.writeString(temp, MAPPER.writeValueAsString(document(run)) + "\n");
-            try {
-                Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } finally {
-            Files.deleteIfExists(temp);
-        }
-
+        Atomically.write(fileFor(run), MAPPER.writeValueAsString(document(run)) + "\n");
         Files.writeString(index(), LINES.writeValueAsString(summary(run)) + "\n",
                 StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
@@ -238,8 +226,8 @@ public final class RunRecorder {
     }
 
     /**
-     * Rewrites the index to the records that survived, temp-then-move so a reader never sees half
-     * an index.
+     * Rewrites the index to the records that survived, so a reader never sees a line pointing at a
+     * record that has been deleted.
      */
     private void rewriteIndex(Set<String> kept) {
         Path index = index();
@@ -254,14 +242,8 @@ public final class RunRecorder {
             if (survivors.size() == lines.size()) {
                 return;
             }
-            Path temp = Files.createTempFile(runsDir, "index", ".tmp");
-            Files.write(temp, survivors, StandardCharsets.UTF_8);
-            try {
-                Files.move(temp, index, StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(temp, index, StandardCopyOption.REPLACE_EXISTING);
-            }
+            Atomically.write(index, survivors.isEmpty() ? ""
+                    : String.join("\n", survivors) + "\n");
         } catch (IOException | RuntimeException e) {
             log.error("could not prune {}: {}", index, e.toString());
         }

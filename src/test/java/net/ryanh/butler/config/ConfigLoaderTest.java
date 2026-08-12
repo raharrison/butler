@@ -12,11 +12,15 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class ConfigLoaderTest {
 
@@ -53,6 +57,44 @@ class ConfigLoaderTest {
             assertEquals("", r.diagnostics().render("canonical.yaml"),
                     "the acceptance config must stay clean");
             assertTrue(r.ok());
+        }
+
+        @Test
+        @DisplayName("is the DESIGN.md example, so the design document cannot describe a config "
+                + "this build would refuse")
+        void isTheExampleFromTheDesignDocument() throws IOException {
+            Path design = Path.of("docs", "DESIGN.md");
+            assumeTrue(Files.isReadable(design),
+                    "run from the project root to check the design document");
+
+            assertEquals(withoutComments(firstYamlBlock(Files.readString(design))),
+                    withoutComments(fixture("canonical.yaml")),
+                    "DESIGN.md §3.2 and the acceptance config have drifted; they are the same "
+                            + "config and only one of them is validated");
+        }
+
+        /**
+         * The §3.2 canonical example, which is the first fenced YAML block in the document.
+         */
+        private static String firstYamlBlock(String markdown) {
+            int start = markdown.indexOf("```yaml\n");
+            assertTrue(start >= 0, "DESIGN.md has no YAML example in it");
+            int from = start + "```yaml\n".length();
+            int end = markdown.indexOf("\n```", from);
+            assertTrue(end > from, "DESIGN.md's first YAML example is not closed");
+            return markdown.substring(from, end);
+        }
+
+        /**
+         * The document annotates its example and the fixture does not, so the comparison is of
+         * what each one says the config <em>is</em>.
+         */
+        private static String withoutComments(String yaml) {
+            return yaml.lines()
+                    .map(line -> line.contains("#") && !line.contains("\"#")
+                            ? line.substring(0, line.indexOf('#')).stripTrailing() : line)
+                    .filter(line -> !line.isBlank())
+                    .collect(Collectors.joining("\n"));
         }
 
         @Test

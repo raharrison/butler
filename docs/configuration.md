@@ -1,7 +1,7 @@
 # Configuration reference
 
 Everything Butler does is driven by one YAML file, given to the daemon at startup. This page is the
-reference; [DESIGN.md](../DESIGN.md) says why it is shaped this way.
+reference; [DESIGN.md](DESIGN.md) says why it is shaped this way.
 
 `butler validate` checks every key on this page, and `butler steps` prints the step half of it
 straight from the registry, so it never falls behind the build you are running.
@@ -13,11 +13,11 @@ straight from the registry, so it never falls behind the build you are running.
 ```yaml
 version: 1
 
-settings: { ... }        # daemon-wide policy
-secrets: { ... }        # where ${secret.*} comes from
-vars: { ... }        # values shared by every job
+settings: { ... }       # daemon-wide policy
+secrets: { ... }       # where ${secret.*} comes from
+vars: { ... }       # values shared by every job
 notifiers: { ... }       # named notification channels
-jobs: { ... }        # required: at least one
+jobs: { ... }       # required: at least one
 ```
 
 **YAML anchors and aliases are refused**, merge keys included. An alias binds as the anchor's *name*
@@ -201,7 +201,7 @@ Step type in `uses:`, parameters as sibling keys.
     backoff: exponential             # fixed | exponential
     on: failure                      # failure | timeout | always
   continue_on_error: false
-  env: { TOKEN: ${ secret.API_TOKEN } }
+  env: { TOKEN: "${secret.API_TOKEN}" }
   working_dir: /srv/apps/api/current
   run_as: appuser
 ```

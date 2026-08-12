@@ -75,7 +75,7 @@ public final class PlanBuilder {
 
     /**
      * A job whose condition cannot be evaluated is reported and treated as not running rather than
-     * guessed at, since the point of showing the decision is that it can be trusted.
+     * guessed at.
      */
     private static Plan.Decision decide(JobDef job, Context ctx, Diagnostics diags) {
         if (job.when() == null) {

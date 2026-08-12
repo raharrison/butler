@@ -17,9 +17,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * (DESIGN.md §5.1). Interruption is cooperative, so a step that blocks on nothing outlives its
  * timeout and is reported as stranded.
  *
- * <p>A step that turns its interrupt into a result of its own keeps it: a process killed for
- * overstaying still knows what it printed, and that tail is the most useful thing about the
- * failure.
+ * <p>A step that turns its interrupt into a result of its own keeps it, so a process killed for
+ * overstaying still reports the tail of what it printed.
  */
 final class StepExecution {
 
@@ -41,7 +40,7 @@ final class StepExecution {
 
     /**
      * How long a step may take: its own timeout, or what is left of the job's, whichever runs out
-     * first. This is the whole of the job-level timeout; nothing races the run as a whole.
+     * first. Capping each step is the whole of the job-level timeout; nothing races the run.
      *
      * @param deadline when the job's own time runs out, or null if it has no {@code timeout:}
      */

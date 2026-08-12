@@ -9,7 +9,10 @@
     <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
         <target>System.err</target>
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} %-5level %X{run_id:-}%replace(%X{job:-}){'^(.+)$', ' $1'}%replace(%X{step:-}){'^(.+)$', '
+            <!-- One line. The %replace calls put a space before job and brackets around step only
+                 when the MDC has them, so a line logged outside a run has neither. Do not wrap
+                 this: a newline inside a replacement string ends up in every line it matches. -->
+            <pattern>%d{HH:mm:ss.SSS} %-5level %X{run_id:-}%replace(%X{job:-}){'^(.+)$',' $1'}%replace(%X{step:-}){'^(.+)$','
                 [$1]'} %msg%n
             </pattern>
         </encoder>

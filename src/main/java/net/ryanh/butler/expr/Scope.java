@@ -23,7 +23,9 @@ public interface Scope {
         return copy::get;
     }
 
-    /** A scope with step-injected locals layered on top, taking priority over the base. */
+    /**
+     * A scope with step-injected locals layered on top, taking priority over the base.
+     */
     default Scope with(Map<String, Object> locals) {
         Map<String, Object> extra = new LinkedHashMap<>(locals);
         return name -> extra.containsKey(name) ? extra.get(name) : root(name);

@@ -7,12 +7,14 @@
 # Do NOT grant `/usr/bin/systemctl *`. That is a root shell with extra steps: `systemctl
 # link`/`edit` will run anything you point them at.
 
+# Only the verbs that change a unit. `systemctl is-active` and `systemctl show`, which
+# systemd.wait_active, systemd.status and every preflight use, are read-only and Butler runs them
+# as itself, so granting them here would widen the allowlist for nothing.
+
 butler ALL=(root) NOPASSWD: /usr/bin/systemctl restart api.service, \
                             /usr/bin/systemctl start   api.service, \
                             /usr/bin/systemctl stop    api.service, \
-                            /usr/bin/systemctl reload  api.service, \
-                            /usr/bin/systemctl is-active api.service, \
-                            /usr/bin/systemctl show    api.service
+                            /usr/bin/systemctl reload  api.service
 
 # `run_as: appuser` on a step is a separate grant, and only needed for the users it names:
 #

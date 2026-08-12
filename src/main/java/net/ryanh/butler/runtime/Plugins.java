@@ -1,6 +1,7 @@
 package net.ryanh.butler.runtime;
 
 import net.ryanh.butler.config.Diagnostics;
+import net.ryanh.butler.util.Literals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,7 +42,7 @@ public final class Plugins {
             return parent;
         }
         if (!Files.isDirectory(dir)) {
-            diags.error("/settings/plugins_dir", "not a directory: " + dir);
+            diags.error("/settings/plugins_dir", "not a directory: " + Literals.path(dir));
             return parent;
         }
 
@@ -51,11 +52,13 @@ public final class Plugins {
                 try {
                     jars.add(jar.toUri().toURL());
                 } catch (MalformedURLException e) {
-                    diags.error("/settings/plugins_dir", "could not load " + jar + ": " + e);
+                    diags.error("/settings/plugins_dir",
+                            "could not load " + Literals.path(jar) + ": " + e);
                 }
             }
         } catch (IOException e) {
-            diags.error("/settings/plugins_dir", "could not read " + dir + ": " + e);
+            diags.error("/settings/plugins_dir",
+                    "could not read " + Literals.path(dir) + ": " + e);
             return parent;
         }
 

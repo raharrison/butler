@@ -242,6 +242,67 @@ class ButlerTest {
     }
 
     @Test
+    @DisplayName("an event the job has already done is dropped before it takes a place in the "
+            + "group, so it cannot queue behind a deploy or displace one")
+    void anAlreadyProcessedEventNeverReachesTheGate() throws Exception {
+        Path watched = Files.createDirectories(root.resolve("in"));
+        Path artifact = watched.resolve("thing.txt");
+        Files.writeString(artifact, "x");
+
+        // Record the artifact's key as already done, the way `butler adopt` does at install time.
+        Butler first = butler(config(watched, """
+                      - uses: fs.template
+                        content: ran
+                        to: %s
+                        mkdirs: true
+                """.formatted(root.resolve("first.txt").toString().replace('\\', '/'))), false);
+        first.start();
+        try {
+            eventually("the first run to finish", () -> Files.exists(root.resolve("first.txt")));
+        } finally {
+            first.stop();
+        }
+
+        // A second daemon over the same state directory sees the same artifact at startup.
+        Butler second = butler(config(watched, """
+                      - uses: fs.template
+                        content: must not run again
+                        to: %s
+                        mkdirs: true
+                """.formatted(root.resolve("second.txt").toString().replace('\\', '/'))), false);
+        second.start();
+        try {
+            Thread.sleep(300);
+        } finally {
+            second.stop();
+        }
+        assertFalse(Files.exists(root.resolve("second.txt")),
+                "the dedupe key has not changed, so there was nothing to do");
+    }
+
+    @Test
+    @DisplayName("an event arriving as shutdown begins is refused rather than started behind the "
+            + "drain's back")
+    void anEventArrivingDuringShutdownIsRefused() throws Exception {
+        Path watched = Files.createDirectories(root.resolve("in"));
+        Butler butler = butler(config(watched, """
+                      - uses: fs.template
+                        content: ran
+                        to: %s
+                        mkdirs: true
+                """.formatted(root.resolve("out.txt").toString().replace('\\', '/'))), false);
+
+        butler.start();
+        butler.stop();
+
+        // The watchers are stopped, but a poll already under way could still emit.
+        Files.writeString(watched.resolve("late.txt"), "x");
+        Thread.sleep(300);
+        assertFalse(Files.exists(root.resolve("out.txt")),
+                "a run started after the drain would be killed halfway by the exit that follows");
+    }
+
+    @Test
     @DisplayName("stopping twice is harmless, and a job with no events is still stopped cleanly")
     void stopsCleanly() throws IOException {
         Path watched = Files.createDirectories(root.resolve("in"));

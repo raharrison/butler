@@ -162,15 +162,15 @@ class EndToEndTest {
                     running, staged);
         }
 
-        /**
-         * The runner {@code systemd.restart} reaches, wired so a restart actually changes what the
-         * service answers.
-         */
         @Override
         public void close() {
             server.close();
         }
 
+        /**
+         * The runner {@code systemd.restart} reaches, wired so a restart actually changes what the
+         * service answers.
+         */
         ProcessRunner restartingProcesses() {
             return new FakeProcessRunner().replying(command -> {
                 if (command.argv().contains("restart") && staged.get() != null) {

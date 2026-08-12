@@ -20,7 +20,7 @@ final class Posts {
 
     /**
      * Short, because a notification is sent after the run has ended and waiting on it delays the
-     * next run for news nobody is waiting on.
+     * next run.
      */
     private static final Duration TIMEOUT = Duration.ofSeconds(15);
 

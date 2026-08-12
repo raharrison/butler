@@ -51,9 +51,8 @@ final class Systemd {
     /**
      * Runs one verb against a unit, then waits for {@code wanted} if a wait was asked for.
      *
-     * <p>The wait is not decoration: {@code systemctl restart} returns once systemd has accepted
-     * the job, not once the service is up, so a health check that follows it immediately is as
-     * likely to be testing the old process.
+     * <p>{@code systemctl restart} returns once systemd has accepted the job, not once the service
+     * is up, so a health check that follows it immediately may be testing the old process.
      */
     static StepResult act(RunContext ctx, String verb, String unit, boolean sudo, Duration wait,
                           String wanted) throws IOException {
@@ -156,8 +155,8 @@ final class Systemd {
     }
 
     /**
-     * {@code -n} makes sudo fail rather than prompt, so this is safe to run from a dry run on a
-     * terminal nobody is watching.
+     * {@code -n} makes sudo fail rather than prompt, so a dry run cannot block waiting for a
+     * password.
      */
     private static boolean sudoAllows(RunContext ctx, String verb, String unit) {
         try {

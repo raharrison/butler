@@ -92,6 +92,37 @@ class RegistryValidatorTest {
     }
 
     @Test
+    @DisplayName("a cron expression that will not parse is caught here too, naming the field")
+    void aBadCronExpressionIsCaught() {
+        Diagnostic d = only("""
+                jobs:
+                  nightly:
+                    on:
+                      - uses: schedule.cron
+                        expression: 0 25 * * *
+                    steps: [{uses: control.log}]
+                """);
+        assertTrue(d.message().contains("hour"), d.message());
+        assertEquals(4, d.loc().line(), d.message());
+    }
+
+    @Test
+    @DisplayName("an unknown timezone is caught before the watcher sleeps against it")
+    void aBadTimezoneIsCaught() {
+        Diagnostic d = only("""
+                jobs:
+                  nightly:
+                    on:
+                      - uses: schedule.cron
+                        expression: 0 3 * * *
+                        timezone: Europe/Atlantis
+                    steps: [{uses: control.log}]
+                """);
+        assertTrue(d.message().contains("Europe/Atlantis"), d.message());
+        assertEquals(4, d.loc().line(), d.message());
+    }
+
+    @Test
     @DisplayName("a misspelled parameter is caught with a suggestion, at its own line")
     void unknownParameterSuggests() {
         Diagnostic d = only("""

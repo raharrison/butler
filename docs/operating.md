@@ -85,8 +85,12 @@ allowlist, one line per unit and verb:
 
 ```
 butler ALL=(root) NOPASSWD: /usr/bin/systemctl restart api.service, \
-                            /usr/bin/systemctl status  api.service
+                            /usr/bin/systemctl reload  api.service
 ```
+
+Only the verbs that change a unit need a grant. `systemctl is-active` and `systemctl show` are
+read-only and Butler runs them as itself, so `systemd.wait_active`, `systemd.status` and every
+preflight check work without one.
 
 Do **not** grant `/usr/bin/systemctl *`. That is a root shell with extra steps: `systemctl link` and
 `systemctl edit` will run whatever you point them at. [`packaging/butler.sudoers`](../packaging/butler.sudoers)
@@ -148,7 +152,10 @@ add.
 
 **`jobs/<job>.json`** is what Butler remembers between runs: the last dedupe key it processed, and
 the values `persist:` and `discover:` produced. Persisted values sit under their own `state` key, so
-a job may `persist:` a value called `dedupe_key` without overwriting the bookkeeping.
+a job may `persist:` a value called `dedupe_key` without overwriting the bookkeeping. They are JSON
+scalars, written exactly as the run report showed them: a value with no JSON form of its own, such
+as a `semver()` or a duration, is stored as its text, so `30s` reads back as `30s` rather than in
+some other syntax.
 
 State is a **cache of host reality, not the truth**. Deleting the directory is safe: discovery
 re-derives what matters on the next event, which is exactly why an unreadable state file is a log

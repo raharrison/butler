@@ -4,6 +4,7 @@ import net.ryanh.butler.spi.EventSink;
 import net.ryanh.butler.spi.TriggerContext;
 import net.ryanh.butler.spi.TriggerType;
 import net.ryanh.butler.spi.Watcher;
+import net.ryanh.butler.util.Cron;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,10 +22,17 @@ public final class CronTrigger implements TriggerType<CronTrigger.Config> {
     private static final Logger log = LoggerFactory.getLogger(CronTrigger.class);
 
     /**
+     * Both parameters are parsed as they bind, so {@code butler validate} refuses a malformed one
+     * with a file, line and column rather than leaving the daemon to report at startup that it is
+     * watching a job that will never fire.
+     *
      * @param expression a five-field cron expression, e.g. {@code 0 3 * * *}
      * @param timezone   an IANA zone name; the host's own zone otherwise
      */
-    public record Config(String expression, String timezone) {
+    public record Config(Cron expression, ZoneId timezone) {
+        public Config {
+            timezone = timezone == null ? ZoneId.systemDefault() : timezone;
+        }
     }
 
     @Override
@@ -39,8 +47,11 @@ public final class CronTrigger implements TriggerType<CronTrigger.Config> {
 
     @Override
     public Watcher start(Config config, EventSink sink, TriggerContext ctx) {
-        Cron cron = Cron.parse(config.expression());
-        ZoneId zone = Cron.zone(config.timezone());
+        if (config.expression() == null) {
+            throw new IllegalArgumentException("schedule.cron needs an expression:");
+        }
+        Cron cron = config.expression();
+        ZoneId zone = config.timezone();
         AtomicBoolean running = new AtomicBoolean(true);
 
         Thread thread = Thread.ofVirtual()
