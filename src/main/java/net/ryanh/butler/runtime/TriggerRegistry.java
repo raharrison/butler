@@ -21,8 +21,16 @@ public final class TriggerRegistry {
      * Loads every registered trigger type from the classpath.
      */
     public static TriggerRegistry discover() {
+        return discover(TriggerRegistry.class.getClassLoader());
+    }
+
+    /**
+     * Loads every registered trigger type visible to one loader, which is how a plugin jar
+     * joins the vocabulary (see {@link Plugins}).
+     */
+    public static TriggerRegistry discover(ClassLoader loader) {
         List<TriggerType<?>> found = new ArrayList<>();
-        for (TriggerType<?> type : ServiceLoader.load(TriggerType.class)) {
+        for (TriggerType<?> type : ServiceLoader.load(TriggerType.class, loader)) {
             found.add(type);
         }
         return of(found);

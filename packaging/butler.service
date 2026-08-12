@@ -1,0 +1,31 @@
+[Unit]
+Description=Butler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=butler
+Group=butler
+ExecStart=/usr/bin/butler --config /etc/butler/butler.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Longer than settings.shutdown_grace (2m by default), or systemd would SIGKILL the daemon
+# part-way through the drain it is in the middle of.
+KillSignal=SIGTERM
+TimeoutStopSec=150
+
+# Butler writes only its state directory, and the steps it runs inherit these limits.
+NoNewPrivileges=false
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/butler
+StateDirectory=butler
+
+# NoNewPrivileges must stay false while any systemd.* step uses sudo (DESIGN.md §10.2). Set it
+# true if the config never escalates, and drop the sudoers snippet with it.
+
+[Install]
+WantedBy=multi-user.target

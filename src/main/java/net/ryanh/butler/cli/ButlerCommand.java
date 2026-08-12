@@ -1,6 +1,7 @@
 package net.ryanh.butler.cli;
 
 import net.ryanh.butler.runtime.Butler;
+import picocli.AutoComplete;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.IVersionProvider;
 import picocli.CommandLine.Mixin;
@@ -25,7 +26,9 @@ import java.util.concurrent.Callable;
                 CheckCommand.class,
                 TriggerCommand.class,
                 AdoptCommand.class,
-                StepsCommand.class
+                StepsCommand.class,
+                // picocli's own, so completion cannot fall behind a new subcommand.
+                AutoComplete.GenerateCompletion.class
         })
 public final class ButlerCommand implements Callable<Integer> {
 
@@ -60,10 +63,12 @@ public final class ButlerCommand implements Callable<Integer> {
     }
 
     /**
-     * Runs until the process is asked to stop. The shutdown hook is what a systemd
-     * {@code TERM} reaches; draining what is in flight is {@link Butler#stop}'s job.
+     * Runs until the process is asked to stop. A JVM shutdown hook is the whole signal design: it
+     * is what both the {@code TERM} systemd sends and the {@code INT} a terminal sends reach.
+     * Draining what is in flight is {@link Butler#stop}'s job.
      */
     private int daemon() {
+        Logging.configure(configOptions.environment().config().settings().logFormat());
         Butler butler = new Butler(configOptions.environment(), configOptions.triggers(),
                 configOptions.dryRun(), System.out);
         Runtime.getRuntime().addShutdownHook(new Thread(butler::stop, "butler-shutdown"));

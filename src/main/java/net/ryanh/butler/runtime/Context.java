@@ -39,10 +39,12 @@ public final class Context implements RunContext {
 
     private Context(boolean dryRun, RunEnvironment env) {
         this.namespaces = new LinkedHashMap<>();
-        this.vars = new LinkedHashMap<>();
-        this.steps = new LinkedHashMap<>();
-        this.state = new LinkedHashMap<>();
-        this.run = new LinkedHashMap<>();
+        // An abandoned step thread goes on holding this view while the run that moved on writes to
+        // it (DESIGN.md §5.1), so a plain map could be read mid-resize. Bulk reads take the monitor.
+        this.vars = Collections.synchronizedMap(new LinkedHashMap<>());
+        this.steps = Collections.synchronizedMap(new LinkedHashMap<>());
+        this.state = Collections.synchronizedMap(new LinkedHashMap<>());
+        this.run = Collections.synchronizedMap(new LinkedHashMap<>());
         this.dryRun = dryRun;
         this.env = env;
         this.command = ProcessRunner.Command.none();
@@ -141,10 +143,17 @@ public final class Context implements RunContext {
 
     // ------------------------------------------------------------------ RunContext
 
+    /**
+     * A snapshot: a namespace a run writes to is safe to iterate only while nothing else is.
+     */
     @Override
     public Map<String, Object> namespace(String name) {
-        Object ns = namespaces.get(name);
-        return ns instanceof Map<?, ?> m ? asStringKeyed(m) : Map.of();
+        if (!(namespaces.get(name) instanceof Map<?, ?> m)) {
+            return Map.of();
+        }
+        synchronized (m) {
+            return Collections.unmodifiableMap(new LinkedHashMap<>(asStringKeyed(m)));
+        }
     }
 
     @Override
@@ -251,7 +260,9 @@ public final class Context implements RunContext {
      * discovery observed.
      */
     public Map<String, Object> state() {
-        return Collections.unmodifiableMap(new LinkedHashMap<>(state));
+        synchronized (state) {
+            return Collections.unmodifiableMap(new LinkedHashMap<>(state));
+        }
     }
 
     /**

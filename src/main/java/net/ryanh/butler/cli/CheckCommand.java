@@ -56,6 +56,7 @@ public final class CheckCommand implements Callable<Integer> {
         kv(sb, 1, "log_format", s.logFormat().name().toLowerCase(Locale.ROOT));
         kv(sb, 1, "max_concurrent_runs", s.maxConcurrentRuns());
         kv(sb, 1, "poll_interval", Durations.format(s.pollInterval()));
+        kv(sb, 1, "shutdown_grace", Durations.format(s.shutdownGrace()));
         kv(sb, 1, "run_retention", "count=" + s.runRetention().count()
                 + " age=" + Durations.format(s.runRetention().age()));
         if (s.pluginsDir() != null) {

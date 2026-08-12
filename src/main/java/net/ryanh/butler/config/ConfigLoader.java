@@ -141,6 +141,7 @@ public final class ConfigLoader {
         Enums.LogFormat logFormat = c.enumValue("log_format", Enums.LogFormat.class, d.logFormat());
         int maxRuns = c.integer("max_concurrent_runs", d.maxConcurrentRuns());
         Duration poll = c.duration("poll_interval", d.pollInterval());
+        Duration grace = c.duration("shutdown_grace", d.shutdownGrace());
 
         Cursor rc = c.object("run_retention");
         ButlerConfig.RunRetention retention = new ButlerConfig.RunRetention(
@@ -156,7 +157,7 @@ public final class ConfigLoader {
                     "must be at least 1, found " + maxRuns);
         }
         return new ButlerConfig.Settings(
-                Path.of(stateDir), logFormat, maxRuns, poll, retention,
+                Path.of(stateDir), logFormat, maxRuns, poll, grace, retention,
                 plugins == null ? null : Path.of(plugins));
     }
 

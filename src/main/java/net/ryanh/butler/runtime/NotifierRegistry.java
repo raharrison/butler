@@ -19,8 +19,16 @@ public final class NotifierRegistry {
      * Loads every registered notifier type from the classpath.
      */
     public static NotifierRegistry discover() {
+        return discover(NotifierRegistry.class.getClassLoader());
+    }
+
+    /**
+     * Loads every registered notifier type visible to one loader, which is how a plugin jar
+     * joins the vocabulary (see {@link Plugins}).
+     */
+    public static NotifierRegistry discover(ClassLoader loader) {
         List<Notifier<?>> found = new ArrayList<>();
-        for (Notifier<?> type : ServiceLoader.load(Notifier.class)) {
+        for (Notifier<?> type : ServiceLoader.load(Notifier.class, loader)) {
             found.add(type);
         }
         return of(found);

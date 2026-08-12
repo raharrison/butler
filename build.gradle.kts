@@ -5,7 +5,10 @@ plugins {
 }
 
 group = "net.ryanh"
-version = "1.0-SNAPSHOT"
+
+// Release builds pass -PbutlerVersion=1.2.3, which reaches `butler --version` and
+// ${butler.version} through the jar manifest.
+version = (findProperty("butlerVersion") as String?) ?: "1.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
@@ -27,10 +30,6 @@ dependencies {
     testImplementation("com.tngtech.archunit:archunit:1.5.0")
 }
 
-tasks.test {
-    useJUnitPlatform()
-}
-
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
@@ -39,4 +38,32 @@ java {
 
 application {
     mainClass.set("net.ryanh.butler.Main")
+}
+
+tasks.jar {
+    manifest {
+        attributes(
+            "Implementation-Title" to "butler",
+            "Implementation-Version" to project.version,
+            "Main-Class" to application.mainClass.get(),
+        )
+    }
+}
+
+// The shadow plugin already inherits the jar manifest; inheriting it again here is a cycle.
+tasks.shadowJar {
+    // The whole vocabulary arrives by ServiceLoader, so losing a META-INF/services file gives a jar
+    // that starts and reports every uses: as unknown. Merging needs INCLUDE, or the duplicates are
+    // dropped before the transformer sees them; append keeps the notices to one entry each.
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    mergeServiceFiles()
+    append("META-INF/LICENSE")
+    append("META-INF/NOTICE")
+}
+
+tasks.test {
+    useJUnitPlatform()
+    // PackagingTest runs the shadow jar as a subprocess.
+    dependsOn(tasks.shadowJar)
+    systemProperty("butler.jar", tasks.shadowJar.flatMap { it.archiveFile }.get().asFile.path)
 }

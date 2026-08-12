@@ -12,6 +12,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
@@ -167,6 +168,77 @@ class ButlerTest {
 
         assertTrue(peak.get() > 0, "no run was ever observed in flight");
         assertTrue(peak.get() <= 2, "saw " + peak.get() + " runs in flight, the bound is 2");
+    }
+
+    /**
+     * A job that says when it started and when it finished, with a stall between the two, so a
+     * shutdown can be timed to land in the middle.
+     */
+    private String stalling(Path watched, String grace, String stall) {
+        return """
+                settings:
+                  state_dir: %s
+                  poll_interval: 20ms
+                  shutdown_grace: %s
+                jobs:
+                  j:
+                    on:
+                      - uses: file.appeared
+                        dir: %s
+                        settle: 20ms
+                        on_startup: all
+                    steps:
+                      - uses: fs.template
+                        content: started
+                        to: %s
+                        mkdirs: true
+                      - uses: control.sleep
+                        duration: %s
+                      - uses: fs.template
+                        content: finished
+                        to: %s
+                    persist:
+                      last: ${trigger.name}
+                """.formatted(root.resolve("state").toString().replace('\\', '/'), grace,
+                watched.toString().replace('\\', '/'),
+                root.resolve("started.txt").toString().replace('\\', '/'), stall,
+                root.resolve("finished.txt").toString().replace('\\', '/'));
+    }
+
+    @Test
+    @DisplayName("shutdown lets a run already in flight finish")
+    void shutdownDrainsInFlightRuns() throws Exception {
+        Path watched = Files.createDirectories(root.resolve("in"));
+        Butler butler = butler(stalling(watched, "1m", "300ms"), false);
+
+        butler.start();
+        Files.writeString(watched.resolve("thing.txt"), "x");
+        eventually("the run to start", () -> Files.exists(root.resolve("started.txt")));
+        butler.stop();
+
+        assertTrue(Files.exists(root.resolve("finished.txt")),
+                "a deploy killed halfway is the worst outcome available, so the drain waits");
+        assertTrue(Files.readString(root.resolve("state/jobs/j.json")).contains("thing.txt"));
+    }
+
+    @Test
+    @DisplayName("a run that outlasts the grace period is cancelled, and writes nothing")
+    void shutdownCancelsWhatOutlastsTheGrace() throws Exception {
+        Path watched = Files.createDirectories(root.resolve("in"));
+        Butler butler = butler(stalling(watched, "100ms", "60s"), false);
+
+        butler.start();
+        Files.writeString(watched.resolve("thing.txt"), "x");
+        eventually("the run to start", () -> Files.exists(root.resolve("started.txt")));
+
+        Instant asked = Instant.now();
+        butler.stop();
+
+        assertTrue(Duration.between(asked, Instant.now()).compareTo(Duration.ofSeconds(30)) < 0,
+                "shutdown should not wait out a 60s step it has already cancelled");
+        assertFalse(Files.exists(root.resolve("finished.txt")), "the run was cut short");
+        assertFalse(Files.exists(root.resolve("state/jobs/j.json")),
+                "a cancelled run records nothing: the work was withdrawn, not done");
     }
 
     @Test

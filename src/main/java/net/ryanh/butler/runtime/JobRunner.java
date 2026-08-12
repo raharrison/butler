@@ -37,9 +37,18 @@ public final class JobRunner {
                     .withZone(ZoneOffset.UTC);
 
     private final RunEnvironment env;
+    private final Cancellation cancel;
 
     public JobRunner(RunEnvironment env) {
+        this(env, Cancellation.none());
+    }
+
+    /**
+     * @param cancel the switch that withdraws this run
+     */
+    public JobRunner(RunEnvironment env, Cancellation cancel) {
         this.env = env;
+        this.cancel = cancel;
     }
 
     /**
@@ -62,6 +71,7 @@ public final class JobRunner {
 
         MDC.put("run_id", id);
         MDC.put("job", job.name());
+        cancel.on(Thread.currentThread());
         try {
             if (!isNewWork(job, event)) {
                 log.info("event already processed, dropping (dedupe key {})", event.dedupeKey());
@@ -131,8 +141,10 @@ public final class JobRunner {
         List<Plan.Entry> discovered = Discovery.run(job, env.steps(), ctx, deadline);
         List<Run.Step> steps = new ArrayList<>();
 
-        Plan.Decision decision = decide(job, ctx);
-        Outcome outcome = judged(job, decision, ctx, deadline, steps);
+        Plan.Decision decision = cancel.isCancelled() ? null : decide(job, ctx);
+        Outcome outcome = cancel.isCancelled()
+                ? withdrawn()
+                : judged(job, decision, ctx, deadline, steps);
 
         Duration took = Duration.between(started, Instant.now());
         ctx.outcome(outcome.status().toString(), took, outcome.failedStep(), outcome.message());
@@ -147,9 +159,13 @@ public final class JobRunner {
         Plan.Notification notification = notify(job, ctx, outcome.status());
 
         log.info("{} in {}", outcome.status(), Durations.format(took));
-        return new Run(id, job.name(), event.trigger(), event.facts(), outcome.status(), started,
+        Run run = new Run(id, job.name(), event.trigger(), event.facts(), outcome.status(), started,
                 took, discovered, decision, List.copyOf(steps), persist, notification,
                 outcome.failedStep(), outcome.message());
+        if (outcome.status() != Run.Status.CANCELLED) {
+            env.runs().record(run);
+        }
+        return run;
     }
 
     /**
@@ -200,10 +216,17 @@ public final class JobRunner {
 
     private Outcome pipeline(JobDef job, Context ctx, Instant deadline, List<Run.Step> steps) {
         for (StepDef def : job.steps()) {
+            if (cancel.isCancelled()) {
+                return withdrawn();
+            }
             if (expired(deadline)) {
                 return timedOut(job, def.label());
             }
             Executed executed = step("step", def, job, ctx, deadline, steps);
+            // A step interrupted by the cancellation decided nothing, so its failure is not one.
+            if (cancel.isCancelled()) {
+                return withdrawn();
+            }
             if (!executed.result().isFailed() || def.continueOnError()) {
                 continue;
             }
@@ -214,6 +237,16 @@ public final class JobRunner {
                     : new Outcome(Run.Status.FAILED, def.label(), executed.result().message());
         }
         return new Outcome(Run.Status.SUCCESS, null, null);
+    }
+
+    /**
+     * A run displaced by a newer event or cut short by shutdown. It runs no hooks and writes
+     * nothing, because nothing was wrong (DESIGN.md §2.1).
+     */
+    private Outcome withdrawn() {
+        String reason = cancel.reason() == null ? "the run was cancelled" : cancel.reason();
+        log.warn("cancelled: {}", reason);
+        return new Outcome(Run.Status.CANCELLED, null, reason);
     }
 
     /**

@@ -20,6 +20,7 @@ public final class ConfigMixin {
     private TriggerRegistry triggers;
     private NotifierRegistry notifiers;
     private RunEnvironment environment;
+    private ClassLoader extensions = ConfigMixin.class.getClassLoader();
 
     @Option(names = {"-c", "--config"},
             paramLabel = "<file>",
@@ -44,7 +45,7 @@ public final class ConfigMixin {
      */
     public StepRegistry steps() {
         if (steps == null) {
-            steps = StepRegistry.discover();
+            steps = StepRegistry.discover(extensions);
         }
         return steps;
     }
@@ -54,7 +55,7 @@ public final class ConfigMixin {
      */
     public TriggerRegistry triggers() {
         if (triggers == null) {
-            triggers = TriggerRegistry.discover();
+            triggers = TriggerRegistry.discover(extensions);
         }
         return triggers;
     }
@@ -64,7 +65,7 @@ public final class ConfigMixin {
      */
     public NotifierRegistry notifiers() {
         if (notifiers == null) {
-            notifiers = NotifierRegistry.discover();
+            notifiers = NotifierRegistry.discover(extensions);
         }
         return notifiers;
     }
@@ -99,6 +100,12 @@ public final class ConfigMixin {
             result = ConfigLoader.load(config);
         } catch (IOException e) {
             throw new UncheckedIOException("could not read " + config, e);
+        }
+        // Before the registries are built, or a config naming a third-party step would be judged
+        // against a vocabulary that does not have it yet.
+        if (result.config() != null) {
+            extensions = Plugins.loader(result.config().settings().pluginsDir(),
+                    result.diagnostics());
         }
         ConfigValidator.validate(result.config(), result.diagnostics(),
                 Vocabulary.of(steps().vocabulary(), triggers().vocabulary()));

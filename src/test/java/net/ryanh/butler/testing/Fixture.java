@@ -43,6 +43,7 @@ public final class Fixture {
                                              Path stateDir, ProcessRunner processes,
                                              NotifierRegistry notifiers) {
         return new RunEnvironment(config.config(), steps, notifiers, StateStore.at(stateDir),
+                RunRecorder.at(stateDir, config.config().settings().runRetention()),
                 processes, Secrets.none());
     }
 }

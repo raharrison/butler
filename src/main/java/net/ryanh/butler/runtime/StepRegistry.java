@@ -25,8 +25,16 @@ public final class StepRegistry {
      * Loads every registered step type from the classpath.
      */
     public static StepRegistry discover() {
+        return discover(StepRegistry.class.getClassLoader());
+    }
+
+    /**
+     * Loads every registered step type visible to one loader, which is how a plugin jar
+     * joins the vocabulary (see {@link Plugins}).
+     */
+    public static StepRegistry discover(ClassLoader loader) {
         List<StepType<?>> found = new ArrayList<>();
-        for (StepType<?> type : ServiceLoader.load(StepType.class)) {
+        for (StepType<?> type : ServiceLoader.load(StepType.class, loader)) {
             found.add(type);
         }
         return of(found);

@@ -1,0 +1,19 @@
+# /etc/sudoers.d/butler   (install with `visudo -f`, mode 0440 root:root)
+#
+# The narrow allowlist of DESIGN.md §10.2: one line per unit and verb Butler is allowed to run,
+# and nothing else. `butler --dry-run` warns when a systemd.* step has no rule matching it, so a
+# missing entry here is a dry-run warning rather than a 3am failure.
+#
+# Do NOT grant `/usr/bin/systemctl *`. That is a root shell with extra steps: `systemctl
+# link`/`edit` will run anything you point them at.
+
+butler ALL=(root) NOPASSWD: /usr/bin/systemctl restart api.service, \
+                            /usr/bin/systemctl start   api.service, \
+                            /usr/bin/systemctl stop    api.service, \
+                            /usr/bin/systemctl reload  api.service, \
+                            /usr/bin/systemctl is-active api.service, \
+                            /usr/bin/systemctl show    api.service
+
+# `run_as: appuser` on a step is a separate grant, and only needed for the users it names:
+#
+# butler ALL=(appuser) NOPASSWD: ALL

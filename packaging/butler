@@ -1,0 +1,11 @@
+#!/bin/sh
+# /usr/bin/butler - the launcher the systemd unit and the operator both call.
+#
+# A shell script rather than a native image so that the jar stays the only artifact to ship and
+# `--version` reads the manifest inside it.
+set -eu
+
+JAR="${BUTLER_JAR:-/usr/lib/butler/butler.jar}"
+JAVA="${JAVA_HOME:+$JAVA_HOME/bin/}java"
+
+exec "$JAVA" ${BUTLER_JAVA_OPTS:-} -jar "$JAR" "$@"

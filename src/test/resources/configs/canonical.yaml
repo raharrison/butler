@@ -7,6 +7,7 @@ settings:
   log_format: json
   max_concurrent_runs: 4
   poll_interval: 5s
+  shutdown_grace: 2m
   run_retention: { count: 200, age: 30d }
   plugins_dir: /var/lib/butler/plugins
 

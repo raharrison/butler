@@ -2,7 +2,8 @@
   Logs go to stderr; stdout carries what a command was asked for (a plan, a run report, the
   effective config). run_id, job and step come from the MDC the runner sets.
 
-  JSON output, selected by settings.log_format, arrives with daemon hardening in M5.
+  This is the text format an interactive command wants and always gets. The daemon replaces it at
+  startup when settings.log_format asks for JSON; see cli/Logging.
 -->
 <configuration>
     <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">

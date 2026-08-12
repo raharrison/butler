@@ -13,12 +13,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.MDC;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -39,10 +41,14 @@ class JobRunnerTest {
     }
 
     private JobRunner runner(String yaml) {
+        return runner(yaml, Cancellation.none());
+    }
+
+    private JobRunner runner(String yaml, Cancellation cancel) {
         StepRegistry steps = StepRegistry.discover();
         ConfigLoader.Result result = config(yaml);
         assertFalse(result.diagnostics().hasErrors(), result.diagnostics().render("test.yaml"));
-        return new JobRunner(Fixture.environment(result, steps, stateDir));
+        return new JobRunner(Fixture.environment(result, steps, stateDir), cancel);
     }
 
     private ConfigLoader.Result config(String yaml) {
@@ -693,9 +699,100 @@ class JobRunnerTest {
         }
     }
 
-    /**
-     * Reports the logging context it was called with.
-     */
+    @Nested
+    @DisplayName("cancellation")
+    class Withdrawn {
+
+        /**
+         * Writes a marker, then stalls, so a cancellation can be timed to land mid-run.
+         */
+        private String yaml(Path marker) {
+            return """
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Start
+                            uses: fs.template
+                            content: started
+                            to: %s
+                            mkdirs: true
+                          - name: Work
+                            uses: control.sleep
+                            duration: 30s
+                        on_failure:
+                          - name: Clean up
+                            uses: control.log
+                            message: cleaning up
+                        persist:
+                          done: "yes"
+                    """.formatted(marker.toString().replace('\\', '/'));
+        }
+
+        @Test
+        @DisplayName("a run displaced mid-step ends CANCELLED: no on_failure, nothing written")
+        void displacedMidRun() throws Exception {
+            Path marker = stateDir.resolve("started.txt");
+            String yaml = yaml(marker);
+            Cancellation cancel = new Cancellation();
+            JobRunner runner = runner(yaml, cancel);
+            var job = config(yaml).config().jobs().get("j");
+
+            AtomicReference<Run> result = new AtomicReference<>();
+            Thread thread = Thread.ofPlatform().name("run").start(() ->
+                    result.set(runner.run(job, new Event("manual", Map.of(), "artifact-1"))));
+
+            Instant deadline = Instant.now().plusSeconds(10);
+            while (!Files.exists(marker) && Instant.now().isBefore(deadline)) {
+                Thread.sleep(5);
+            }
+            assertTrue(Files.exists(marker), "the run never reached its first step");
+
+            cancel.cancel("displaced by a newer event");
+            assertTrue(thread.join(Duration.ofSeconds(10)), "the cancelled run never ended");
+
+            Run run = result.get();
+            assertEquals(Run.Status.CANCELLED, run.status());
+            assertEquals("displaced by a newer event", run.message());
+            assertTrue(run.steps().stream().noneMatch(s -> s.section().equals("on_failure")),
+                    "nothing was wrong, so there is nothing for on_failure: to clean up");
+            assertTrue(run.persisted().isEmpty());
+            assertTrue(state("j").values().isEmpty(), "a cancelled run writes no state");
+            assertNull(state("j").dedupeKey(), "nor claims the event as done");
+        }
+
+        @Test
+        @DisplayName("a run cancelled before it starts runs no step at all")
+        void withdrawnBeforeItStarts() {
+            Path marker = stateDir.resolve("started.txt");
+            String yaml = yaml(marker);
+            Cancellation cancel = new Cancellation();
+            cancel.cancel("butler is shutting down");
+
+            Run run = runner(yaml, cancel)
+                    .run(config(yaml).config().jobs().get("j"),
+                            new Event("manual", Map.of(), null));
+
+            assertEquals(Run.Status.CANCELLED, run.status());
+            assertEquals("butler is shutting down", run.message());
+            assertTrue(run.steps().isEmpty());
+            assertFalse(Files.exists(marker));
+        }
+
+        @Test
+        @DisplayName("a cancelled run leaves no audit record either")
+        void noRunRecord() {
+            String yaml = yaml(stateDir.resolve("started.txt"));
+            Cancellation cancel = new Cancellation();
+            cancel.cancel("butler is shutting down");
+            runner(yaml, cancel).run(config(yaml).config().jobs().get("j"),
+                    new Event("manual", Map.of(), null));
+
+            assertFalse(Files.exists(stateDir.resolve("runs")),
+                    "the work was withdrawn, so there is nothing to record");
+        }
+    }
+
     /**
      * A step that catches its own interrupt and reports how far it got.
      */
