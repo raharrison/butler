@@ -70,6 +70,20 @@ No bash, no version comparison, no "is it up yet" polling loop. When the vocabul
   `ServiceLoader`; adding `docker.compose` means writing a record and a class, not touching the
   runtime.
 
+---
+
+## Contents
+
+- [Install](#install) · [Getting started](#getting-started) · [The CLI](#the-cli)
+- [Config in one page](#config-in-one-page)
+- [What's available](#whats-available): [triggers](#triggers) · [steps](#steps) ·
+  [notifiers](#notifiers) · [expressions](#expressions)
+- [Recipes](#recipes)
+- [Onboarding an existing host](#onboarding-an-existing-host) ·
+  [Privileges](#privileges) · [Documentation](#documentation) · [Building](#building)
+
+---
+
 ## Install
 
 Take `butler.jar` and the launcher from the latest release, which the tag workflow builds with the
@@ -134,21 +148,6 @@ butler --dry-run                # watch everything, report every firing, touch n
 butler                          # the daemon
 ```
 
-## Onboarding an existing host
-
-This is the least obvious part of operating Butler, and worth following in order.
-
-|   |                                                                                                                                                                                                                                                                               |
-|---|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Install the jar and the launcher, and write `/etc/butler/butler.yaml`.                                                                                                                                                                                                        |
-| 2 | `butler validate` until it is clean.                                                                                                                                                                                                                                          |
-| 3 | `butler --dry-run` and **leave it for a day.** It starts every watcher, runs every `discover:` block for real and prints what each firing would do, without changing anything. Read the log. This is the safe way to point Butler at a server that is already running things. |
-| 4 | `butler adopt` once. It runs each job's `discover:` block, records what the host is actually serving as state, and records the dedupe key of whatever artifact is already sitting in the watch directory. Without it, the first event after startup looks like new work.      |
-| 5 | `systemctl enable --now butler`.                                                                                                                                                                                                                                              |
-
-Step 4 is what stops a fresh install from redeploying an application that is already running the
-right version. Step 3 is what tells you whether step 4 will do what you expect.
-
 ## The CLI
 
 ```
@@ -161,13 +160,349 @@ butler steps [<name>]                    # the registered step types and their p
 butler generate-completion               # bash/zsh completion script
 ```
 
+| Command                 | What it is for                                                                                     |
+|-------------------------|----------------------------------------------------------------------------------------------------|
+| `butler`                | The daemon. Starts a watcher per trigger and runs jobs as events arrive.                           |
+| `butler --dry-run`      | The same, reporting every firing instead of acting on it. Safe against a live host.                |
+| `butler validate`       | CI gate. Exits 1 on any error; warnings alone still exit 0.                                        |
+| `butler check`          | Answers "is that key doing what I think", with defaults filled in.                                 |
+| `butler trigger <job>`  | Run or rehearse one job now. `--set k=v` supplies or overrides a trigger fact.                     |
+| `butler adopt [<job>]`  | Install-time seeding on a host that is already serving. See [below](#onboarding-an-existing-host). |
+| `butler steps [<name>]` | The vocabulary this build actually has, generated from the registry.                               |
+
+Examples:
+
+```bash
+butler steps                                # every step type and its parameters
+butler steps fs.symlink                     # just one
+butler trigger api --dry-run | less         # read the plan for the newest artifact present
+butler trigger api --set version=1.2.4      # run against a fact you supply
+butler adopt                                # seed state for every job, run nothing
+butler validate -c ./butler.yaml            # any command takes --config
+```
+
 `--config` defaults to `/etc/butler/butler.yaml` and is on every command, so they all read the same
 config the daemon will. Exit codes are `0` ok, `1` failure or validation errors, `2` bad usage.
 
 Logs go to stderr; stdout carries whatever you asked for, so `butler trigger api --dry-run | less`
 shows the plan and nothing else.
 
-## Privileges, plainly
+## Config in one page
+
+```yaml
+version: 1
+
+settings: # all optional, defaults shown
+  state_dir: /var/lib/butler     # where state and run history are written
+  log_format: json               # json | text, for the daemon
+  max_concurrent_runs: 4         # global bound on runs in flight
+  poll_interval: 5s              # default cadence for polling triggers
+  shutdown_grace: 2m             # how long a drain lets in-flight runs finish
+  run_retention: { count: 200, age: 30d }
+  plugins_dir: /var/lib/butler/plugins    # jars of third-party steps
+
+secrets:
+  from_env: true                 # ${secret.FOO} resolves from $FOO
+  file: /etc/butler/secrets.yaml # a flat name: value mapping
+
+vars: # readable everywhere as ${vars.name}
+  releases_root: /srv/apps
+
+notifiers: # named channels, referenced by name
+  ops:
+    uses: notify.slack
+    webhook: ${secret.SLACK_WEBHOOK}
+    channel: "#deploys"
+
+jobs:
+  api:
+    description: Free text, shown by butler check
+    on: [ ... ]           # required: one or more triggers
+    vars: { ... }           # job-local, merged over the global ones
+    env: { ... }           # applied to every process-backed step in the job
+    discover: [ ... ]           # observe the host, populate state.* (runs before when:)
+    when: <condition>       # run only if true
+    concurrency: { group: api, mode: queue, queue_newest_only: true }
+    timeout: 10m               # whole-run limit; exceeding it fails the run
+    steps: [ ... ]           # required: the pipeline
+    on_failure: [ ... ]          # hooks
+    on_success: [ ... ]
+    always: [ ... ]
+    persist: { ... }           # state keys written after a successful run
+    notify: { to: ops, on: [ success, failure ], success: "...", failure: "..." }
+```
+
+Every step takes the same reserved keys, whatever its type:
+
+```yaml
+- name: Human label, used in logs and notifications
+  uses: http.request               # required: the step type
+  when: <condition>                # skip this step if false
+  register: probe                  # expose the result as steps.probe.*
+  timeout: 30s
+  retry: { attempts: 3, delay: 5s, backoff: exponential, on: failure }
+  continue_on_error: false
+  env: { TOKEN: "${secret.API_TOKEN}" }
+  working_dir: /srv/apps/api/current
+  run_as: appuser
+  # ...then the step's own parameters as sibling keys
+```
+
+Those names are reserved and can never be a step's own parameter, along with `extract:`, which is
+valid only inside a `discover:` block.
+
+`docs/configuration.md` is the full reference for all of it.
+
+---
+
+## What's available
+
+### Triggers
+
+| Trigger                                                 | Fires when                            | Key parameters                                                |
+|---------------------------------------------------------|---------------------------------------|---------------------------------------------------------------|
+| [`file.appeared`](docs/configuration.md#fileappeared)   | a new file settles in a directory     | `dir` (required), `match`, `settle`, `order_by`, `on_startup` |
+| [`file.changed`](docs/configuration.md#filechanged)     | one file's contents change            | `path` (required), `settle`, `on_startup`                     |
+| [`schedule.every`](docs/configuration.md#scheduleevery) | a fixed interval elapses              | `interval` (default `1h`)                                     |
+| [`schedule.cron`](docs/configuration.md#schedulecron)   | a 5-field cron expression comes round | `expression` (required), `timezone`                           |
+| [`manual`](docs/configuration.md#manual)                | `butler trigger` asks it to           | none                                                          |
+
+A trigger's parameters are never templated: a watcher starts before any event exists, so there is
+no run to resolve `${...}` against.
+
+### Steps
+
+`butler steps` prints this from the registry with every parameter, so it never falls behind the
+build you are running. Full parameter tables, defaults and outputs are in
+[docs/configuration.md](docs/configuration.md#step-reference).
+
+| Step                  | What it does                                                                    |
+|-----------------------|---------------------------------------------------------------------------------|
+| `control.log`         | Write a message into the run log.                                               |
+| `control.set`         | Set variables the rest of the run can read.                                     |
+| `control.assert`      | Fail the run unless a condition holds.                                          |
+| `control.sleep`       | Wait for a fixed duration.                                                      |
+| `control.fail`        | Fail the run with a message.                                                    |
+| `shell.run`           | Run a script through a shell. The escape hatch.                                 |
+| `shell.exec`          | Run a program with explicit arguments, no shell.                                |
+| `fs.copy`             | Copy a file, creating parent directories and setting its mode.                  |
+| `fs.move`             | Move a file or directory.                                                       |
+| `fs.symlink`          | Point a symlink at a target, atomically. Reports `previous_target`.             |
+| `fs.readlink`         | Report what a symlink points at.                                                |
+| `fs.read`             | Read a file's contents.                                                         |
+| `fs.list`             | List a directory, ordered and filtered.                                         |
+| `fs.exists`           | Report whether a path exists, and what it is.                                   |
+| `fs.mkdir`            | Create a directory.                                                             |
+| `fs.template`         | Write a file, filling in `${...}` from the run.                                 |
+| `fs.prune`            | Delete all but the newest entries of a directory. Never deletes what is in use. |
+| `systemd.restart`     | Restart a unit, waiting for it to become active.                                |
+| `systemd.start`       | Start a unit, waiting for it to become active.                                  |
+| `systemd.stop`        | Stop a unit, waiting for it to become inactive.                                 |
+| `systemd.reload`      | Ask a unit to reload its configuration.                                         |
+| `systemd.wait_active` | Wait for a unit to reach a state, changing nothing.                             |
+| `systemd.status`      | Report a unit's state, sub-state and main PID.                                  |
+| `http.request`        | Make one HTTP request and report the response.                                  |
+| `http.wait`           | Poll a URL until a condition holds.                                             |
+| `notify.send`         | Send a message through a declared notifier.                                     |
+
+### Notifiers
+
+| `uses`           | Parameters                                                                             |
+|------------------|----------------------------------------------------------------------------------------|
+| `notify.slack`   | `webhook` (required), `channel`, `username`, `icon_emoji`                              |
+| `notify.discord` | `webhook` (required), `username`                                                       |
+| `notify.ntfy`    | `topic` (required), `server` (default `https://ntfy.sh`), `title`, `priority`, `token` |
+| `notify.webhook` | `url` (required), `field` (default `text`), `headers`                                  |
+
+### Expressions
+
+Conditions (`when:`, `until:`, `that:`) take a bare expression. Every other value is text with
+`${expr}` holes.
+
+| Namespace        | Holds                                                                                                       |
+|------------------|-------------------------------------------------------------------------------------------------------------|
+| `vars.*`         | global `vars:` merged with job `vars:`, then any `control.set` step                                         |
+| `trigger.*`      | facts from the event, including regex capture groups                                                        |
+| `steps.<name>.*` | results of steps that declared `register:`                                                                  |
+| `state.*`        | persisted values, overlaid with what `discover:` observed                                                   |
+| `env.*`          | process environment                                                                                         |
+| `secret.*`       | resolved secrets                                                                                            |
+| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; in hooks also `status`, `duration`, `failed_step`, `error` |
+| `butler.*`       | `version`, `host`                                                                                           |
+
+Operators: `and`, `or`, `not`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `matches`, `contains`.
+
+Functions: `semver`, `exists`, `default`, `len`, `int`, `lower`, `upper`, `trim`, `basename`,
+`dirname`, `match`, `file_exists`, `now`.
+
+```yaml
+when: semver(trigger.version) > semver(default(state.deployed_version, "0.0.0"))
+when: exists(steps.symlink.previous_target)
+when: steps.probe.ok and steps.probe.status == 200
+until: status == 200 and json.version == ${trigger.version}
+that: trim(steps.version.stdout) == trigger.version
+message: staged at ${vars.releases_root}/${trigger.version}
+```
+
+An unknown *path* is `null`; an unknown *namespace* is a validation error, so `${triger.version}`
+is caught at load time. Ordering against null is an error rather than a guess: use `default()` or
+`exists()`.
+
+---
+
+## Recipes
+
+### Deploy a jar when CI drops it
+
+The [canonical example](docs/DESIGN.md#32-canonical-example), complete and annotated.
+`src/test/resources/configs/canonical.yaml` is the same config, and is validated on every build.
+
+### Restart a service when its config file changes
+
+```yaml
+jobs:
+  nginx:
+    on:
+      - uses: file.changed
+        path: /etc/nginx/nginx.conf
+        settle: 5s
+    steps:
+      - name: Check the config before loading it
+        uses: shell.exec
+        argv: [ /usr/sbin/nginx, -t ]
+      - uses: systemd.reload
+        unit: nginx.service
+    notify:
+      to: ops
+      on: [ failure ]
+      failure: "nginx config is bad, not reloaded: ${run.error}"
+```
+
+### A nightly job
+
+```yaml
+jobs:
+  backup:
+    on:
+      - uses: schedule.cron
+        expression: 0 3 * * *
+        timezone: Europe/London
+    timeout: 1h
+    steps:
+      - uses: shell.run
+        script: /usr/local/bin/backup.sh
+        timeout: 55m
+        register: backup
+      - name: A zero exit is not the same as a finished backup
+        uses: control.assert
+        that: steps.backup.stdout contains "backup complete"
+        message: the script exited 0 without finishing
+```
+
+A non-zero exit already fails `shell.run`, so the assertion is there for the case that does not.
+
+### Ask a host what it is running, without an HTTP endpoint
+
+Any step can be a `discover:` step. In rough order of preference:
+
+```yaml
+discover:
+  # The symlink a deploy repoints, which needs nothing from the app.
+  - uses: fs.readlink
+    path: /srv/apps/api/current
+    extract:
+      deployed_version: basename(value)
+
+  # A version file.
+  - uses: fs.read
+    path: /srv/apps/api/VERSION
+    when: not exists(state.deployed_version)
+    extract:
+      deployed_version: trim(value)
+
+  # Or ask the binary.
+  - uses: shell.run
+    script: /opt/myapp/bin/myapp --version
+    timeout: 5s
+    when: not exists(state.deployed_version)
+    extract:
+      deployed_version: match(stdout, 'v?(\d+\.\d+\.\d+)', 1)
+```
+
+A discovery step that fails contributes nothing and the persisted value stands, so the fallbacks
+chain safely.
+
+### Keep the last five releases
+
+```yaml
+- name: Prune old releases
+  uses: fs.prune
+  dir: /srv/apps/api/releases
+  keep: 5
+  order_by: semver
+  continue_on_error: true
+```
+
+It never deletes what a symlink beside the directory points at, whatever `keep:` works out to.
+
+### Retry something flaky
+
+```yaml
+- uses: http.request
+  url: https://registry.example/api/publish
+  method: POST
+  body: ${vars.payload}
+  expect_status: [ 200, 201 ]
+  retry: { attempts: 3, delay: 5s, backoff: exponential }
+  timeout: 30s
+```
+
+### Run one step as another user
+
+```yaml
+- uses: shell.run
+  run_as: appuser
+  working_dir: /srv/apps/api/current
+  script: ./bin/migrate --to ${trigger.version}
+  timeout: 2m
+```
+
+`run_as:` is `sudo -u appuser` and needs its own sudoers grant.
+
+### Escape hatch
+
+```yaml
+- name: Anything not covered
+  uses: shell.run
+  shell: /bin/bash
+  working_dir: ${vars.releases_root}/api/current
+  timeout: 2m
+  script: |
+    set -euo pipefail
+    ./bin/migrate --to ${trigger.version}
+  register: migrate            # .stdout .stderr .exit_code
+```
+
+A shell variable is written `$${HOME}`, since `${...}` belongs to the config.
+
+---
+
+## Onboarding an existing host
+
+This is the least obvious part of operating Butler, and worth following in order.
+
+|   |                                                                                                                                                                                                           |
+|---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1 | Install the jar and the launcher, and write `/etc/butler/butler.yaml`.                                                                                                                                    |
+| 2 | `butler validate` until it is clean.                                                                                                                                                                      |
+| 3 | `butler --dry-run` and **leave it for a day.** It starts every watcher, runs every `discover:` block for real and prints what each firing would do, without changing anything. Read the log.              |
+| 4 | `butler adopt` once. It runs each job's `discover:` block, records what the host is actually serving as state, and records the dedupe key of whatever artifact is already sitting in the watch directory. |
+| 5 | `systemctl enable --now butler`.                                                                                                                                                                          |
+
+Step 4 is what stops a fresh install from redeploying an application that is already running the
+right version. Step 3 is what tells you whether step 4 will do what you expect.
+
+## Privileges
 
 **`shell.run` executes with the daemon's privileges, and so does anything inside a `discover:`
 block.** A `discover:` step runs even under `--dry-run` - it has to, or a dry run would report a
@@ -183,16 +518,16 @@ one; `is-active` and `show` are read-only and run as the daemon's own user. `but
 warns when a `systemd.*` step has no matching rule, which turns a 3am failure into a dry-run
 warning. There is [a sample snippet](packaging/butler.sudoers) to copy.
 
-Secrets are **not redacted** from logs or captured process output in v1. The guidance is not to
-echo them; see [DESIGN.md §11](docs/DESIGN.md).
+Secrets are **not redacted** from logs, captured process output or run records in v1. The guidance
+is not to echo them; see [DESIGN.md §11](docs/DESIGN.md).
 
 ## Documentation
 
-|                                                |                                                                                            |
-|------------------------------------------------|--------------------------------------------------------------------------------------------|
-| [docs/configuration.md](docs/configuration.md) | The config reference: every key, the expression language, the step and trigger vocabulary. |
-| [docs/operating.md](docs/operating.md)         | systemd, install layout, sudoers, logging, the state directory, plugins.                   |
-| [docs/DESIGN.md](docs/DESIGN.md)               | Why it is shaped this way. Authoritative for the model, and what is deliberately absent.   |
+|                                                |                                                                                          |
+|------------------------------------------------|------------------------------------------------------------------------------------------|
+| [docs/configuration.md](docs/configuration.md) | The config reference: every key, every trigger and step with its parameters and outputs. |
+| [docs/operating.md](docs/operating.md)         | systemd, install layout, sudoers, logging, the state directory, plugins.                 |
+| [docs/DESIGN.md](docs/DESIGN.md)               | Why it is shaped this way. Authoritative for the model, and what is deliberately absent. |
 
 `butler steps` is generated from the registry, so it documents the vocabulary this build actually
 has rather than the one the docs were written against.

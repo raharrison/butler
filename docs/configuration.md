@@ -1,10 +1,15 @@
 # Configuration reference
 
 Everything Butler does is driven by one YAML file, given to the daemon at startup. This page is the
-reference; [DESIGN.md](DESIGN.md) says why it is shaped this way.
+reference; [DESIGN.md](DESIGN.md) says why it is shaped this way, and the [README](../README.md) is
+the guide to getting one running.
 
 `butler validate` checks every key on this page, and `butler steps` prints the step half of it
 straight from the registry, so it never falls behind the build you are running.
+
+**Contents:** [Document](#document) · [Jobs](#jobs) · [Steps](#steps) ·
+[Trigger reference](#trigger-reference) · [Step reference](#step-reference) ·
+[Notifier reference](#notifier-reference) · [Expressions](#the-expression-language)
 
 ---
 
@@ -13,11 +18,11 @@ straight from the registry, so it never falls behind the build you are running.
 ```yaml
 version: 1
 
-settings: { ... }       # daemon-wide policy
-secrets: { ... }       # where ${secret.*} comes from
-vars: { ... }       # values shared by every job
+settings: { ... }        # daemon-wide policy
+secrets: { ... }         # where ${secret.*} comes from
+vars: { ... }            # values shared by every job
 notifiers: { ... }       # named notification channels
-jobs: { ... }       # required: at least one
+jobs: { ... }            # required: at least one
 ```
 
 **YAML anchors and aliases are refused**, merge keys included. An alias binds as the anchor's *name*
@@ -32,7 +37,7 @@ A repeated key is an error rather than last-one-wins.
 |-----------------------|--------------------------|--------------------------------------------------------------------------------|
 | `state_dir`           | `/var/lib/butler`        | Where per-job state and run records are written.                               |
 | `log_format`          | `json`                   | `json` or `text`. Applies to the daemon; interactive commands are always text. |
-| `max_concurrent_runs` | `4`                      | Global bound on runs in flight, across all jobs.                               |
+| `max_concurrent_runs` | `4`                      | Global bound on runs in flight, across all jobs. At least 1.                   |
 | `poll_interval`       | `5s`                     | Default polling interval for polling triggers.                                 |
 | `shutdown_grace`      | `2m`                     | How long a shutdown lets in-flight runs finish before cancelling them.         |
 | `run_retention`       | `{count: 200, age: 30d}` | How much run history to keep. Both apply: whichever drops a record first wins. |
@@ -52,12 +57,23 @@ the host they run on. A file that exists and cannot be parsed is.
 ### `vars`
 
 A flat mapping shared by every job, readable as `${vars.name}`. Job-level `vars:` merge over it, and
-a `control.set` step writes into the same namespace.
+a `control.set` step writes into the same namespace. Job vars resolve after the global ones, so they
+may refer to them:
+
+```yaml
+vars:
+  releases_root: /srv/apps
+jobs:
+  api:
+    vars:
+      release_dir: ${vars.releases_root}/api/releases
+```
 
 ### `notifiers`
 
 Named channels, referenced by name from a job's `notify: to:` and from the `notify.send` step. Their
-parameters resolve against the run, so a webhook can come from a secret.
+parameters resolve against the run, so a webhook can come from a secret. See the
+[notifier reference](#notifier-reference).
 
 ```yaml
 notifiers:
@@ -66,13 +82,6 @@ notifiers:
     webhook: ${secret.SLACK_WEBHOOK}
     channel: "#deploys"
 ```
-
-| `uses`           | Parameters                                                                  |
-|------------------|-----------------------------------------------------------------------------|
-| `notify.slack`   | `webhook`, `channel`, `username`, `icon_emoji`                              |
-| `notify.discord` | `webhook`, `username`                                                       |
-| `notify.ntfy`    | `server` (default `https://ntfy.sh`), `topic`, `title`, `priority`, `token` |
-| `notify.webhook` | `url`, `field` (default `text`), `headers`                                  |
 
 A channel that refuses a message is logged; it never fails a run that otherwise succeeded.
 
@@ -143,7 +152,7 @@ never runs and is logged as such.
 ### `discover`
 
 Observation-only steps that run **before `when:`, on every event**, and whose `extract:` values
-populate `state.*`.
+populate `state.*`. `extract:` maps a state key to an expression over the step's own result.
 
 ```yaml
 discover:
@@ -168,7 +177,8 @@ Five rules that matter:
    care which one it got.
 2. **Discovery failure is not run failure.** A step that errors or times out contributes nothing and
    the persisted value stands. An `extract:` that produces no value is the same case: a health
-   endpoint that changed shape must not read as "nothing is deployed".
+   endpoint that changed shape must not read as "nothing is deployed". That is what lets the
+   fallbacks above chain safely.
 3. **Any step may be used**, including `shell.run`. Keeping the host read-only during discovery is
    the config author's responsibility.
 4. **Discovery runs for real under `--dry-run`**, or the decision a dry run reports would be wrong.
@@ -176,12 +186,37 @@ Five rules that matter:
 5. A run that ends `SKIPPED` still writes discovered state and records the dedupe key, or every poll
    would rediscover and re-skip forever.
 
+An `extract:` expression sees the step's own outputs - `json` and `status` for an HTTP probe, `value`
+for a symlink read, `stdout` for a command - beside the eight namespaces.
+
 `butler validate` warns when a job's `when:` references `state.*` but the job declares no
 `discover:` block, because that combination is almost always a first-run bug.
 
-For apps with no HTTP endpoint, in rough order of preference: `fs.readlink` on the current release
-symlink, `fs.read` on a version file, `fs.list` over a releases directory ordered by semver, or
-`shell.run` with `myapp --version` and a `match()` over its stdout.
+### `persist`
+
+Values written to `state.*` after a **successful** run, readable by the next one.
+
+```yaml
+persist:
+  deployed_version: ${trigger.version}
+  current_release: ${vars.releases_root}/api/releases/${trigger.version}
+```
+
+Stored as JSON scalars, exactly as the run report showed them. There is no `state.put` step: state
+mutation scattered through a pipeline is how half-written state survives a mid-run failure.
+
+### `notify`
+
+```yaml
+notify:
+  to: ops                          # a name from the notifiers: block
+  on: [ success, failure ]         # which outcomes fire; both by default
+  success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
+  failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}"
+```
+
+Messages see `run.status`, `run.duration`, `run.failed_step` and `run.error` as well as the usual
+namespaces. An outcome with no message template sends nothing.
 
 ---
 
@@ -209,90 +244,547 @@ Step type in `uses:`, parameters as sibling keys.
 Those keys are **reserved** on every step and may never be a parameter name, along with `extract`,
 which is valid only inside a `discover:` block.
 
+| Reserved key        | Meaning                                                                                          |
+|---------------------|--------------------------------------------------------------------------------------------------|
+| `name`              | Label for logs, the plan and `${run.failed_step}`. Defaults to the step type.                    |
+| `uses`              | Required. The step type.                                                                         |
+| `when`              | A condition. False skips the step without failing the run.                                       |
+| `register`          | Exposes the result as `steps.<name>.*`. A usable identifier, unique across the job.              |
+| `timeout`           | How long the step may take. The runtime enforces it by interrupting the step.                    |
+| `retry`             | `attempts` (at least 1), `delay`, `backoff: fixed\|exponential`, `on: failure\|timeout\|always`. |
+| `continue_on_error` | A failure is recorded but does not fail the run.                                                 |
+| `env`               | Environment for a process-backed step, merged over the job's `env:`.                             |
+| `working_dir`       | Directory a process-backed step starts in.                                                       |
+| `run_as`            | User to become, as `sudo -u <user>`. Needs its own sudoers grant.                                |
+
+A step's own `timeout:` and the job's `timeout:` are not two racing mechanisms: the job's is a
+deadline that caps what each step is given, so a job with five minutes left never hands a step ten.
+
 ### Results
 
 Every step produces the same shape, which is what `register:` exposes:
 
-| Field                           |                                          |
-|---------------------------------|------------------------------------------|
-| `status`                        | `ok` / `failed` / `skipped`              |
-| `ok`, `failed`, `skipped`       | booleans, for readable conditions        |
-| `duration`, `attempts`          |                                          |
-| `stdout`, `stderr`, `exit_code` | process-backed steps only                |
-| *step-specific*                 | `previous_target`, `json`, `sha256`, ... |
+| Field                     |                                               |
+|---------------------------|-----------------------------------------------|
+| `status`                  | `ok` / `failed` / `skipped`                   |
+| `ok`, `failed`, `skipped` | booleans, for readable conditions             |
+| `duration`, `attempts`    |                                               |
+| `message`                 | why it failed, when there is something to say |
+| *step-specific*           | the **Outputs** of each step below            |
 
 Where a step's own output shares a name with a common field, as `http.request`'s `status` does, the
-step's wins.
+step's wins. `ok`, `failed` and `skipped` still say how the step itself went.
 
-### The vocabulary
-
-`butler steps` prints this with every parameter. Summarised:
-
-| Namespace | Steps                                                                                         |
-|-----------|-----------------------------------------------------------------------------------------------|
-| `control` | `log`, `set`, `assert`, `sleep`, `fail`                                                       |
-| `shell`   | `run` (through a shell), `exec` (argv, no shell)                                              |
-| `fs`      | `copy`, `move`, `symlink`, `readlink`, `read`, `list`, `exists`, `mkdir`, `template`, `prune` |
-| `systemd` | `restart`, `start`, `stop`, `reload`, `wait_active`, `status`                                 |
-| `http`    | `request`, `wait`                                                                             |
-| `notify`  | `send`                                                                                        |
-
-Three worth knowing in detail:
-
-- **`fs.symlink`** swaps atomically by default (temp symlink beside the target, then an atomic move)
-  so a reader never observes a missing link, and outputs `previous_target`. That is what makes an
-  `on_failure:` rollback a four-line step. Its `simulate()` reads the current link for real, so a
-  dry run reports the true previous target.
-- **`fs.prune`** never deletes what something still points at. It refuses any entry named by
-  `protect:` or targeted by a symlink beside the releases directory, whatever the `keep:` arithmetic
-  says, and reports what it spared. `keep:` is required: a missing number must not read as zero.
-- **`http.wait`** has no timeout of its own - the step's reserved `timeout:` is the limit, and the
-  step turns being cut off into an account of how far it got: probes, elapsed, last status and body.
-  Its `until:` sees `status`, `headers`, `body` and `json` for the probe in flight.
-
-The `systemd` verbs that mutate a unit put `sudo` in front by default; `sudo: false` turns that off
-for a user unit. That is separate from `run_as:`, which says which user to become.
+```yaml
+- uses: http.request
+  url: http://localhost:8080/health
+  register: probe
+- uses: control.assert
+  that: steps.probe.ok and steps.probe.json.version == trigger.version
+```
 
 ---
 
-## Triggers
+## Trigger reference
 
 A trigger's parameters are **never templated**: a watcher is started before any event exists, so
 there is no run to resolve a `${}` against. Everything a trigger parses for itself - the regex, the
-`order_by:` comparator - is settled before the watch thread starts, and refused by `butler validate`
-before that.
+cron expression, the `order_by:` comparator - is settled before the watch thread starts, and refused
+by `butler validate` before that.
+
+Every event carries a **dedupe key**. A run only starts when the key differs from the last one the
+job processed, which is what makes a restart cheap. A trigger with no key is always new work.
+
+A parameter marked **required** is refused by `butler validate`, and again by the trigger before its
+watch thread starts, so a watcher never dies leaving the daemon reporting that it watches the job.
 
 ### `file.appeared`
 
-The one the main use case rests on.
+Fires when a new file settles in a directory. The trigger the main use case rests on.
 
 ```yaml
 - uses: file.appeared
   dir: /srv/artifacts/api
   match: 'api-(?<version>\d+\.\d+\.\d+)\.jar'
-  settle: 10s                  # size and mtime unchanged this long before firing
-  order_by: semver(version)    # fire only for the greatest candidate
-  on_startup: latest           # latest | none | all
+  settle: 10s
+  order_by: semver(version)
+  on_startup: latest
 ```
+
+| Parameter    | Type                        | Default    |                                                                 |
+|--------------|-----------------------------|------------|-----------------------------------------------------------------|
+| `dir`        | path                        |            | **required.** Directory to watch. Not recursive.                |
+| `match`      | regex                       | every file | Matched against the whole file name. Named groups become facts. |
+| `settle`     | duration                    | `10s`      | Size and mtime must be unchanged this long before firing.       |
+| `order_by`   | *condition*                 |            | Ranks candidates over their own facts. Only the greatest fires. |
+| `on_startup` | `latest` \| `none` \| `all` | `latest`   | What to do about files already there when the daemon starts.    |
+
+**Facts:** `path`, `name`, `dir`, `size`, `modified`, plus every named capture group in `match`.
+**Dedupe key:** absolute path, size and mtime, so the same file rewritten is new work.
 
 - **Polling is the primary mechanism.** A `WatchService` misses files written before startup and
   coalesces under load; a 5s poll of one directory costs nothing.
 - **Settle detection is mandatory**, because deploying a half-uploaded jar is the most likely
   first-week failure.
-- **Named capture groups become `trigger.*` facts**, so `${trigger.version}` is whatever the regex
-  captured. `trigger.path`, `trigger.name`, `trigger.size` are always there.
 - **`order_by:` means only the greatest candidate fires**, so dropping an old artifact into the
-  directory cannot trigger a downgrade. It is an expression over the captured facts.
-- Dedupe key is the absolute path plus size plus mtime.
+  directory cannot trigger a downgrade. It is an expression over the captured facts rather than a
+  field name, which is what lets it read `semver(version)`.
 
-### The rest
+### `file.changed`
 
-| Trigger          | Parameters                                                          |
-|------------------|---------------------------------------------------------------------|
-| `file.changed`   | `path`, `settle`, `on_startup`. Fires on a content hash change.     |
-| `schedule.every` | `interval` (default `1h`).                                          |
-| `schedule.cron`  | `expression` (5-field), `timezone`.                                 |
-| `manual`         | none. Fires only by `butler trigger`, and is the testing workhorse. |
+Fires when the contents of one file change, by content hash rather than mtime, so a
+config-management tool rewriting a file every hour with the same contents redeploys nothing.
+
+```yaml
+- uses: file.changed
+  path: /etc/nginx/nginx.conf
+  settle: 5s
+```
+
+| Parameter    | Type                        | Default  |                                                                        |
+|--------------|-----------------------------|----------|------------------------------------------------------------------------|
+| `path`       | path                        |          | **required.** The one file to watch.                                   |
+| `settle`     | duration                    | `10s`    | Size and mtime must be unchanged this long before it is read.          |
+| `on_startup` | `latest` \| `none` \| `all` | `latest` | `none` waits for a change; the other two report what is already there. |
+
+**Facts:** `path`, `name`, `dir`, `size`, `modified`, `sha256`.
+**Dedupe key:** absolute path and content hash.
+
+### `schedule.every`
+
+Fires on a fixed interval, each one counted from the last. The first firing is one interval away
+rather than immediate, because a daemon that ran every job the moment it started would turn a
+restart into a deployment.
+
+```yaml
+- uses: schedule.every
+  interval: 15m
+```
+
+| Parameter  | Type     | Default |
+|------------|----------|---------|
+| `interval` | duration | `1h`    |
+
+**Facts:** `fired_at`. **Dedupe key:** none, so every firing is new work.
+
+### `schedule.cron`
+
+Fires on a five-field cron expression: minute, hour, day of month, month, day of week.
+
+```yaml
+- uses: schedule.cron
+  expression: 0 3 * * *
+  timezone: Europe/London
+```
+
+| Parameter    | Type           | Default         |                            |
+|--------------|----------------|-----------------|----------------------------|
+| `expression` | cron           |                 | **required.** Five fields. |
+| `timezone`   | IANA zone name | the host's zone |                            |
+
+Each field takes `*`, `a` or `a-b`, any of them with a trailing `/step`, comma-separated. Months
+(`jan`) and days (`mon`) may be named. Day `0` and day `7` are both Sunday. With both day fields
+restricted, either matches, as every crontab does: `0 0 1 * mon` fires on the first of the month and
+on every Monday. A local time the clock skips at a daylight-saving boundary is moved past the gap
+rather than dropped, so a nightly job stays nightly.
+
+**Facts:** `fired_at`. **Dedupe key:** none.
+
+### `manual`
+
+Fires only when `butler trigger <job>` asks it to. The testing workhorse, and the right trigger for a
+job that only ever runs by hand.
+
+```yaml
+- uses: manual
+```
+
+No parameters. **Facts:** whatever `--set k=v` supplies. **Dedupe key:** none, so a run asked for by
+hand is never suppressed as already done.
+
+---
+
+## Step reference
+
+`butler steps` prints this from the registry, and `butler steps <name>` prints one of them. Every
+step also takes the [reserved keys](#steps) above.
+
+**Required** below means `butler validate` refuses a config that omits it. Presence is what is
+checked, so a required value may be a `${...}` only a run can resolve. Every parameter is
+interpolated before the step sees it, except the ones marked *condition*, which are parsed instead.
+
+### `control`
+
+#### `control.log`
+
+Write a message into the run log.
+
+| Parameter | Type                                   | Default |
+|-----------|----------------------------------------|---------|
+| `message` | text                                   | empty   |
+| `level`   | `debug` \| `info` \| `warn` \| `error` | `info`  |
+
+#### `control.set`
+
+Set variables the rest of the run can read. The values land in `vars.*` rather than under the step's
+own name.
+
+| Parameter | Type    | Default |
+|-----------|---------|---------|
+| `vars`    | mapping | empty   |
+
+```yaml
+- uses: control.set
+  vars:
+    release_path: ${vars.releases_root}/${trigger.version}
+```
+
+#### `control.assert`
+
+Fail the run unless a condition holds.
+
+| Parameter | Type        | Default                    |
+|-----------|-------------|----------------------------|
+| `that`    | *condition* | **required**               |
+| `message` | text        | `assertion failed: <that>` |
+
+#### `control.sleep`
+
+Wait for a fixed duration, for when something needs a moment and there is nothing to poll.
+
+| Parameter  | Type     | Default |
+|------------|----------|---------|
+| `duration` | duration | `0s`    |
+
+#### `control.fail`
+
+Fail the run with a message. Paired with `when:` it is the end of a branch a pipeline should never
+reach.
+
+| Parameter | Type | Default        |
+|-----------|------|----------------|
+| `message` | text | `control.fail` |
+
+### `shell`
+
+Both steps report **Outputs:** `stdout`, `stderr`, `exit_code`. A non-zero exit fails the step, with
+the last line of output in the message. Output is captured into a bounded buffer that keeps the
+tail, so a chatty process costs nothing.
+
+#### `shell.run`
+
+Run a script through a shell. The escape hatch of the whole design, and it runs with the daemon's
+privileges unless `run_as:` says otherwise.
+
+| Parameter | Type | Default   |
+|-----------|------|-----------|
+| `script`  | text | empty     |
+| `shell`   | text | `/bin/sh` |
+
+The script is interpolated like any other value, so a shell variable is written `$${HOME}`.
+
+#### `shell.exec`
+
+Run one program with an explicit argument list and no shell. Preferred wherever an argument comes
+from an event: a path holding a space is passed through untouched rather than re-split by a shell.
+
+| Parameter | Type | Default      |
+|-----------|------|--------------|
+| `argv`    | list | **required** |
+
+```yaml
+- uses: shell.exec
+  argv: [ /usr/bin/rsync, -a, "${trigger.path}", /srv/backup/ ]
+```
+
+### `fs`
+
+#### `fs.copy`
+
+Copy a file, creating parent directories and setting its mode.
+
+| Parameter   | Type       | Default     |                                    |
+|-------------|------------|-------------|------------------------------------|
+| `from`      | path       |             | **required**                       |
+| `to`        | path       |             | **required**                       |
+| `mode`      | text       | leave as-is | Octal, quoted: `"0640"`.           |
+| `mkdirs`    | true/false | `false`     | Create the directories above `to`. |
+| `overwrite` | true/false | `true`      |                                    |
+
+**Outputs:** `path`, `bytes`.
+
+#### `fs.move`
+
+Move a file or directory. Atomic where both sides are on one filesystem, a copy-and-delete
+otherwise, as `mv` is.
+
+| Parameter   | Type       | Default     |              |
+|-------------|------------|-------------|--------------|
+| `from`      | path       |             | **required** |
+| `to`        | path       |             | **required** |
+| `mode`      | text       | leave as-is |              |
+| `mkdirs`    | true/false | `false`     |              |
+| `overwrite` | true/false | `true`      |              |
+
+**Outputs:** `path`.
+
+#### `fs.symlink`
+
+Point a symlink at a target and report the target it replaced. That is what makes an `on_failure:`
+rollback a four-line step.
+
+| Parameter | Type       | Default |                                                                                         |
+|-----------|------------|---------|-----------------------------------------------------------------------------------------|
+| `link`    | path       |         | **required.** The link to create or repoint.                                            |
+| `target`  | path       |         | **required.** What it should point at.                                                  |
+| `atomic`  | true/false | `true`  | Temp symlink beside it, then an atomic move, so a reader never observes a missing link. |
+
+**Outputs:** `previous_target` (null if there was no link), `link`, `target`.
+
+Reading the link changes nothing, so a dry run reports the true previous target and the rollback
+branch describes correctly.
+
+#### `fs.readlink`
+
+Report what a symlink points at. Fails if the path is not a symlink, which inside a `discover:`
+block leaves the persisted value standing.
+
+| Parameter | Type | Default |              |
+|-----------|------|---------|--------------|
+| `path`    | path |         | **required** |
+
+**Outputs:** `value`.
+
+#### `fs.read`
+
+Read a file's contents. They arrive exactly as they are on disk, trailing newline included; a config
+that wants otherwise writes `trim(value)`.
+
+| Parameter   | Type   | Default   |                                                                                       |
+|-------------|--------|-----------|---------------------------------------------------------------------------------------|
+| `path`      | path   |           | **required**                                                                          |
+| `max_bytes` | number | `1048576` | Refuse anything larger, since the contents reach the run's memory and its state file. |
+
+**Outputs:** `value`, `bytes`.
+
+#### `fs.list`
+
+List a directory, ordered and filtered. Entries come back least first, so `last` is the greatest.
+
+| Parameter  | Type                             | Default     |                                                              |
+|------------|----------------------------------|-------------|--------------------------------------------------------------|
+| `dir`      | path                             |             | **required**                                                 |
+| `match`    | regex                            | every entry | Matched against the whole entry name.                        |
+| `order_by` | `name` \| `semver` \| `modified` | `name`      | A name that is not a version sorts below every name that is. |
+| `limit`    | number                           | all         | Keep this many, counting back from the greatest.             |
+
+**Outputs:** `entries` (a list of names), `count`, `first`, `last`.
+
+#### `fs.exists`
+
+Report whether a path exists, and what it is. Succeeds either way, because "no" is an answer; a job
+that wants a missing path to end the run asserts on `exists`.
+
+| Parameter | Type | Default |              |
+|-----------|------|---------|--------------|
+| `path`    | path |         | **required** |
+
+**Outputs:** `exists`, `type` (`file`, `directory`, `symlink`, `other` or `missing`).
+
+#### `fs.mkdir`
+
+Create a directory.
+
+| Parameter | Type       | Default     |                                      |
+|-----------|------------|-------------|--------------------------------------|
+| `path`    | path       |             | **required**                         |
+| `mode`    | text       | leave as-is |                                      |
+| `parents` | true/false | `true`      | Create the directories above it too. |
+
+**Outputs:** `path`, `created` (false if it was already there).
+
+#### `fs.template`
+
+Write a file whose `${...}` holes are filled in from the run. Takes `from:` or `content:`, not both.
+
+| Parameter | Type       | Default     |                                                         |
+|-----------|------------|-------------|---------------------------------------------------------|
+| `to`      | path       |             | **required**                                            |
+| `from`    | path       |             | A template file, read and rendered by this step.        |
+| `content` | text       |             | The template inline, rendered like any other parameter. |
+| `mode`    | text       | leave as-is |                                                         |
+| `mkdirs`  | true/false | `false`     |                                                         |
+
+**Outputs:** `path`, `bytes`.
+
+#### `fs.prune`
+
+Delete all but the newest entries of a directory.
+
+| Parameter  | Type                             | Default    |                                                                     |
+|------------|----------------------------------|------------|---------------------------------------------------------------------|
+| `dir`      | path                             |            | **required**                                                        |
+| `keep`     | number                           |            | **required.** A missing number must not read as zero.               |
+| `order_by` | `name` \| `semver` \| `modified` | `modified` |                                                                     |
+| `protect`  | list of paths                    | none       | A bare name means an entry of `dir`; an absolute path means itself. |
+
+**Outputs:** `deleted`, `kept`, `protected`, all lists of names.
+
+**It never deletes what something still points at.** Anything named by `protect:`, or targeted by a
+symlink beside the pruned directory, is kept whatever the `keep:` arithmetic says, and the step
+reports what it spared. After a rollback by hand the running release is an old one, and deleting it
+takes the application down.
+
+### `systemd`
+
+The verbs that mutate a unit put `sudo` in front by default, matching the sudoers allowlist in
+[operating.md](operating.md#privileges). That is separate from `run_as:`, which says which user to
+become rather than that root is required. `is-active` and `show`, which `wait_active`, `status` and
+every preflight check use, are read-only and run as the daemon's own user.
+
+#### `systemd.restart`, `systemd.start`, `systemd.reload`
+
+| Parameter     | Type       | Default     |                                                     |
+|---------------|------------|-------------|-----------------------------------------------------|
+| `unit`        | text       |             | **required**, e.g. `api.service`                    |
+| `wait_active` | duration   | do not wait | Poll `is-active` until the unit is active, or fail. |
+| `sudo`        | true/false | `true`      | `false` for a user unit.                            |
+
+**Outputs:** `active_state` (when waiting), `stdout`, `stderr`, `exit_code`.
+
+`systemctl restart` returns once systemd has accepted the job, not once the service is up, so a
+health check that follows it immediately may be testing the old process. `wait_active:` is the fix.
+
+#### `systemd.stop`
+
+| Parameter       | Type       | Default     |              |
+|-----------------|------------|-------------|--------------|
+| `unit`          | text       |             | **required** |
+| `wait_inactive` | duration   | do not wait |              |
+| `sudo`          | true/false | `true`      |              |
+
+**Outputs:** `active_state` (when waiting), `stdout`, `stderr`, `exit_code`.
+
+#### `systemd.wait_active`
+
+Wait for a unit to reach a state, without changing anything itself.
+
+| Parameter  | Type     | Default  |                                                                     |
+|------------|----------|----------|---------------------------------------------------------------------|
+| `unit`     | text     |          | **required**                                                        |
+| `state`    | text     | `active` | The state to wait for.                                              |
+| `wait_for` | duration | `30s`    | Reads `wait_for:`, since a record component cannot be named `wait`. |
+
+**Outputs:** `active_state`.
+
+#### `systemd.status`
+
+Report a unit's state, sub-state and main PID. Fails if systemd has never heard of the unit.
+
+| Parameter | Type | Default |              |
+|-----------|------|---------|--------------|
+| `unit`    | text |         | **required** |
+
+**Outputs:** `load_state`, `active_state`, `sub_state`, `pid` (null when there is no process).
+
+### `http`
+
+Both steps report **Outputs:** `status`, `headers` (names lowercased), `body`, and `json` where the
+body parses as JSON. A body that is not JSON leaves `json` null rather than failing the step.
+
+#### `http.request`
+
+Make one HTTP request and report the response. The request is given whatever the step's own
+`timeout:` allows, so there is one timeout to set rather than two that can disagree.
+
+| Parameter       | Type            | Default |                                            |
+|-----------------|-----------------|---------|--------------------------------------------|
+| `url`           | text            |         | **required**                               |
+| `method`        | text            | `GET`   |                                            |
+| `headers`       | mapping         | none    |                                            |
+| `body`          | text            | none    |                                            |
+| `expect_status` | list of numbers | any 2xx | One value or a list: `expect_status: 200`. |
+
+#### `http.wait`
+
+Poll a URL until `until:` holds, and fail when it runs out of time.
+
+| Parameter  | Type        | Default |                                                                                    |
+|------------|-------------|---------|------------------------------------------------------------------------------------|
+| `url`      | text        |         | **required**                                                                       |
+| `until`    | *condition* |         | **required.** Sees `status`, `headers`, `body` and `json` for the probe in flight. |
+| `interval` | duration    | `2s`    |                                                                                    |
+| `method`   | text        | `GET`   |                                                                                    |
+| `headers`  | mapping     | none    |                                                                                    |
+
+**Outputs:** the four above, plus `probes` and `elapsed`.
+
+There is no timeout parameter: the step's reserved `timeout:` is the limit, and the step turns being
+cut off into an account of how far it got - probes, elapsed, last status and body. A refused
+connection is a probe that did not hold rather than a failure, because that is what a service being
+restarted looks like. With no `timeout:` it would poll for as long as it takes, which `--dry-run`
+warns about.
+
+### `notify`
+
+#### `notify.send`
+
+Send a message through a channel declared under `notifiers:`, from the middle of a pipeline.
+Announcing how a run ended is the job-level `notify:` policy's work.
+
+| Parameter | Type | Default |                                                   |
+|-----------|------|---------|---------------------------------------------------|
+| `to`      | text |         | **required.** A name from the `notifiers:` block. |
+| `message` | text | empty   |                                                   |
+
+---
+
+## Notifier reference
+
+Declared under `notifiers:` and referenced by name. Parameters resolve per send, so a webhook can
+come from `${secret.*}`.
+
+#### `notify.slack`
+
+Posts to a Slack incoming webhook.
+
+| Parameter    | Type |              |                                                       |
+|--------------|------|--------------|-------------------------------------------------------|
+| `webhook`    | text | **required** | The URL is a secret: write `${secret.SLACK_WEBHOOK}`. |
+| `channel`    | text |              | Quoted, so `#deploys` is not read as a comment.       |
+| `username`   | text |              |                                                       |
+| `icon_emoji` | text |              |                                                       |
+
+#### `notify.discord`
+
+Posts to a Discord webhook, which takes the message in `content`.
+
+| Parameter  | Type |              | |
+|------------|------|--------------|-|
+| `webhook`  | text | **required** | |
+| `username` | text |              | |
+
+#### `notify.ntfy`
+
+Posts to an ntfy topic, which takes the message as the body and everything else as headers.
+
+| Parameter  | Type | Default           |                                     |
+|------------|------|-------------------|-------------------------------------|
+| `topic`    | text |                   | **required**                        |
+| `server`   | text | `https://ntfy.sh` |                                     |
+| `title`    | text |                   |                                     |
+| `priority` | text |                   |                                     |
+| `token`    | text |                   | Access token for a protected topic. |
+
+#### `notify.webhook`
+
+Posts the message as JSON to any URL, for a service with no notifier of its own.
+
+| Parameter | Type    | Default |                                     |
+|-----------|---------|---------|-------------------------------------|
+| `url`     | text    |         | **required**                        |
+| `field`   | text    | `text`  | The JSON field the message goes in. |
+| `headers` | mapping | none    |                                     |
 
 ---
 
@@ -316,6 +808,9 @@ literal := STRING | NUMBER | DURATION | 'true' | 'false' | 'null'
 expression; `${x}` is accepted as a synonym for `x` and stripped at parse time. Every other value is
 a *string*: literal text with `${expr}` holes, where `$${` escapes a literal `${`.
 
+A hole that is the whole value keeps its type, so `keep: ${vars.keep}` stays a number rather than
+becoming `"5"`.
+
 **Namespaces**, and nothing else:
 
 |                  |                                                                                                                           |
@@ -333,12 +828,40 @@ An unknown *path* evaluates to `null`; an unknown *namespace* is a validation er
 `${triger.version}` is caught at load time while `default(state.deployed_version, "0.0.0")` still
 works on a first run.
 
-**Functions:** `semver(s)`, `exists(path)`, `default(a, b)`, `len(x)`, `int(x)`, `lower(s)`,
-`upper(s)`, `trim(s)`, `basename(p)`, `dirname(p)`, `match(s, re[, group])`, `file_exists(p)`,
-`now()`.
+### Operators
 
-`semver()` returns a comparable value, so `semver(a) > semver(b)` never ranks `1.10.0` below
-`1.9.0`.
+|                      |                                                                                              |
+|----------------------|----------------------------------------------------------------------------------------------|
+| `and`, `or`, `not`   | `and` binds tighter than `or`; parenthesise where it matters.                                |
+| `==`, `!=`           | Accept null on either side. A number and its text compare equal, so `status == "200"` holds. |
+| `<`, `<=`, `>`, `>=` | Ordering. Against null it is an error rather than a guess.                                   |
+| `matches`            | Regex search over the right-hand side. Null is no match.                                     |
+| `contains`           | Substring, list membership, or map key. Null is no match.                                    |
+
+### Functions
+
+|                                   |                                                                                          |
+|-----------------------------------|------------------------------------------------------------------------------------------|
+| `semver(s)`                       | A comparable version, so `1.10.0` never ranks below `1.9.0`. A leading `v` is tolerated. |
+| `exists(path)`                    | Whether the path resolved to anything.                                                   |
+| `default(a, b)`                   | `a` unless it is null.                                                                   |
+| `len(x)`                          | Length of a string, list or map.                                                         |
+| `int(x)`                          | A whole number, from text or from a duration's milliseconds.                             |
+| `lower(s)`, `upper(s)`, `trim(s)` |                                                                                          |
+| `basename(p)`, `dirname(p)`       | Path halves, without touching the filesystem.                                            |
+| `match(s, re[, group])`           | The first match, or a capture group of it, or null.                                      |
+| `file_exists(p)`                  | Whether the file is there, on this host, now.                                            |
+| `now()`                           | The current instant.                                                                     |
+
+```yaml
+when: semver(trigger.version) > semver(default(state.deployed_version, "0.0.0"))
+when: exists(steps.symlink.previous_target)
+when: not (trigger.name matches '-rc\d+\.jar$')
+until: status == 200 and json.version == ${trigger.version}
+that: len(steps.releases.entries) > 0
+extract:
+  deployed_version: match(stdout, 'v?(\d+\.\d+\.\d+)', 1)
+```
 
 **A double-quoted string takes escapes; a single-quoted one is raw**, exactly as in YAML. That is
 what makes a regex readable: `match(stdout, 'v?(\d+\.\d+\.\d+)', 1)`.
