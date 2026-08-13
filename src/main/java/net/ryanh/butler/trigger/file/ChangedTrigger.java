@@ -43,12 +43,20 @@ public final class ChangedTrigger implements TriggerType<ChangedTrigger.Config> 
     }
 
     @Override
+    public List<String> required() {
+        return List.of("path");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }
 
     @Override
     public Watcher start(Config config, EventSink sink, TriggerContext ctx) {
+        if (config.path() == null) {
+            throw new IllegalArgumentException("file.changed needs a path:");
+        }
         AtomicBoolean running = new AtomicBoolean(true);
         Thread thread = Thread.ofVirtual()
                 .name("trigger-file.changed-" + ctx.job())
@@ -108,7 +116,7 @@ public final class ChangedTrigger implements TriggerType<ChangedTrigger.Config> 
     @Override
     public List<Event> current(Config config, TriggerContext ctx) {
         try {
-            if (!Files.isRegularFile(config.path())) {
+            if (config.path() == null || !Files.isRegularFile(config.path())) {
                 return List.of();
             }
             Watched.Snapshot snapshot = Watched.Snapshot.of(config.path());

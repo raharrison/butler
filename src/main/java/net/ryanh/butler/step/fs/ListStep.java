@@ -36,6 +36,11 @@ public final class ListStep implements StepType<ListStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("dir");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

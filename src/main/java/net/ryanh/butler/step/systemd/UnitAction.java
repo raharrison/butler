@@ -30,6 +30,11 @@ abstract class UnitAction implements StepType<UnitAction.Config> {
     abstract String verb();
 
     @Override
+    public final List<String> required() {
+        return List.of("unit");
+    }
+
+    @Override
     public final Class<Config> configType() {
         return Config.class;
     }

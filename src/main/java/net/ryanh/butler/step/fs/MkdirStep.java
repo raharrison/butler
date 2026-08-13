@@ -28,6 +28,11 @@ public final class MkdirStep implements StepType<MkdirStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("path");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

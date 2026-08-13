@@ -50,6 +50,11 @@ public final class AppearedTrigger implements TriggerType<AppearedTrigger.Config
     }
 
     @Override
+    public List<String> required() {
+        return List.of("dir");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }
@@ -65,8 +70,9 @@ public final class AppearedTrigger implements TriggerType<AppearedTrigger.Config
 
     @Override
     public Watcher start(Config config, EventSink sink, TriggerContext ctx) {
-        // On the caller's thread, so an order_by that will not parse is reported rather than
-        // killing the watch thread in silence.
+        if (config.dir() == null) {
+            throw new IllegalArgumentException("file.appeared needs a dir:");
+        }
         Comparator<Map<String, Object>> byFacts =
                 config.ranks() ? ctx.ordering(config.orderBy()) : null;
         AtomicBoolean running = new AtomicBoolean(true);
@@ -135,7 +141,7 @@ public final class AppearedTrigger implements TriggerType<AppearedTrigger.Config
      * Every matching file in the directory as it stands, settled or not.
      */
     private List<Candidate> scan(Config config, Pattern pattern) {
-        if (!Files.isDirectory(config.dir())) {
+        if (config.dir() == null || !Files.isDirectory(config.dir())) {
             return List.of();
         }
         List<Candidate> out = new ArrayList<>();

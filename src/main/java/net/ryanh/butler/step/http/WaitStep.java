@@ -37,6 +37,11 @@ public final class WaitStep implements StepType<WaitStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("url", "until");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

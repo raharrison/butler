@@ -27,6 +27,11 @@ public final class ExistsStep implements StepType<ExistsStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("path");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

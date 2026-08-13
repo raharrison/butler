@@ -60,12 +60,22 @@ public final class StepsCommand implements Callable<Integer> {
 
         RecordComponent[] components = type.configType().getRecordComponents();
         List<String> names = Params.names(type.configType());
+        List<String> required = type.required();
         int width = names.stream().mapToInt(String::length).max().orElse(0);
+        int types = names.isEmpty() ? 0 : components.length;
+        int typeWidth = 0;
+        for (int i = 0; i < types; i++) {
+            typeWidth = Math.max(typeWidth, Params.describeType(components[i].getType()).length());
+        }
         for (int i = 0; i < components.length; i++) {
+            String described = Params.describeType(components[i].getType());
             sb.append("    ").append(names.get(i))
                     .append(" ".repeat(width - names.get(i).length() + 3))
-                    .append(Params.describeType(components[i].getType()))
-                    .append('\n');
+                    .append(described);
+            if (required.contains(names.get(i))) {
+                sb.append(" ".repeat(typeWidth - described.length() + 3)).append("required");
+            }
+            sb.append('\n');
         }
         return sb.toString();
     }

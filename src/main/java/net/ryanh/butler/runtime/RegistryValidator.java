@@ -55,7 +55,8 @@ public final class RegistryValidator {
             diags.error(def.path() + "/uses", unknown("trigger", def.uses(), registry.names()));
             return;
         }
-        parameters(def.path(), def.uses(), "trigger", def.params(), type.configType(), diags);
+        parameters(def.path(), def.uses(), "trigger", def.params(), type.configType(),
+                type.required(), diags);
     }
 
     private static void notifier(NotifierDef def, NotifierRegistry registry, Diagnostics diags) {
@@ -67,7 +68,8 @@ public final class RegistryValidator {
             diags.error(def.path() + "/uses", unknown("notifier", def.uses(), registry.names()));
             return;
         }
-        parameters(def.path(), def.uses(), "notifier", def.params(), type.configType(), diags);
+        parameters(def.path(), def.uses(), "notifier", def.params(), type.configType(),
+                List.of(), diags);
     }
 
     private static void step(StepDef def, StepRegistry registry, Diagnostics diags) {
@@ -79,7 +81,8 @@ public final class RegistryValidator {
             diags.error(def.path() + "/uses", unknown("step", def.uses(), registry.names()));
             return;
         }
-        parameters(def.path(), def.uses(), "step", def.params(), type.configType(), diags);
+        parameters(def.path(), def.uses(), "step", def.params(), type.configType(),
+                type.required(), diags);
     }
 
     private static String unknown(String kind, String uses, Set<String> known) {
@@ -90,14 +93,21 @@ public final class RegistryValidator {
     }
 
     /**
-     * Unknown parameter names are always caught. Types are only checked when nothing is templated:
-     * a value like {@code ${vars.keep}} has no type until the run supplies one, which is where
-     * binding happens for real (see {@link PlanBuilder}).
+     * Missing and unknown parameter names are always caught. Types are only checked when nothing
+     * is templated: a value like {@code ${vars.keep}} has no type until the run supplies one,
+     * which is where binding happens for real (see {@link PlanBuilder}).
      */
     private static void parameters(String path, String uses, String kind,
                                    Map<String, Object> params, Class<?> configType,
-                                   Diagnostics diags) {
+                                   List<String> required, Diagnostics diags) {
         List<String> known = Params.names(configType);
+        // Presence, not value: a required parameter may be a ${...} only a run can resolve.
+        for (String key : required) {
+            if (!params.containsKey(key)) {
+                diags.error(path, "missing required parameter \"" + key + "\" for " + kind
+                        + " type \"" + uses + "\"");
+            }
+        }
         boolean unknownKeys = false;
         for (String key : params.keySet()) {
             if (!known.contains(key)) {

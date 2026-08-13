@@ -30,6 +30,15 @@ public interface TriggerType<C> {
     }
 
     /**
+     * Parameters the trigger cannot watch without, checked by {@code butler validate} exactly as
+     * {@link StepType#required()} is. A trigger also refuses one in {@link #start}, because a
+     * watcher that threw on its own thread would die where nothing is listening.
+     */
+    default List<String> required() {
+        return List.of();
+    }
+
+    /**
      * The events this trigger would fire for as things stand right now, oldest first, without
      * starting a watcher.
      *

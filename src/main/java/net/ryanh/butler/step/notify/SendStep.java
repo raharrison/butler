@@ -5,6 +5,8 @@ import net.ryanh.butler.spi.StepResult;
 import net.ryanh.butler.spi.StepType;
 import net.ryanh.butler.util.Literals;
 
+import java.util.List;
+
 /**
  * Sends a message through a channel declared under {@code notifiers:}, from the middle of a
  * pipeline. Announcing how a run ended is the job-level {@code notify:} policy's work.
@@ -17,6 +19,11 @@ public final class SendStep implements StepType<SendStep.Config> {
     @Override
     public String name() {
         return "notify.send";
+    }
+
+    @Override
+    public List<String> required() {
+        return List.of("to");
     }
 
     @Override

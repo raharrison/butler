@@ -30,6 +30,11 @@ public final class StopStep implements StepType<StopStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("unit");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

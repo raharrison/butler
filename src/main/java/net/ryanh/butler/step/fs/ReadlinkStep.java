@@ -22,6 +22,11 @@ public final class ReadlinkStep implements StepType<ReadlinkStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("path");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

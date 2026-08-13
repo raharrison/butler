@@ -224,6 +224,22 @@ class FileTriggerTest {
         }
 
         @Test
+        @DisplayName("no dir: fails the start rather than leaving the daemon reporting that it "
+                + "watches a job whose watch thread died on the first poll")
+        void aMissingDirFailsTheStart() throws Exception {
+            AppearedTrigger.Config config =
+                    new AppearedTrigger.Config(null, null, Duration.ofMillis(50), null,
+                            OnStartup.ALL);
+
+            var e = assertThrows(IllegalArgumentException.class,
+                    () -> new AppearedTrigger().start(config, fired::add, CTX));
+            assertTrue(e.getMessage().contains("needs a dir"), e.getMessage());
+
+            // And the rehearsal path, which does not go through start(), simply sees nothing.
+            assertEquals(List.of(), new AppearedTrigger().current(config, CTX));
+        }
+
+        @Test
         @DisplayName("current() is what butler trigger rehearses against: the settled candidates, "
                 + "greatest last")
         void currentReportsTheSettledCandidates() throws Exception {
@@ -281,6 +297,18 @@ class FileTriggerTest {
             } finally {
                 watcher.stop();
             }
+        }
+
+        @Test
+        @DisplayName("no path: fails the start, as file.appeared does without a dir")
+        void aMissingPathFailsTheStart() {
+            ChangedTrigger.Config config =
+                    new ChangedTrigger.Config(null, Duration.ofMillis(50), OnStartup.LATEST);
+
+            var e = assertThrows(IllegalArgumentException.class,
+                    () -> new ChangedTrigger().start(config, fired::add, CTX));
+            assertTrue(e.getMessage().contains("needs a path"), e.getMessage());
+            assertEquals(List.of(), new ChangedTrigger().current(config, CTX));
         }
 
         @Test

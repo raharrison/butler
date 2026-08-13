@@ -38,6 +38,11 @@ public final class CopyStep implements StepType<CopyStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("from", "to");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

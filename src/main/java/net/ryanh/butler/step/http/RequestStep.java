@@ -36,6 +36,11 @@ public final class RequestStep implements StepType<RequestStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("url");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

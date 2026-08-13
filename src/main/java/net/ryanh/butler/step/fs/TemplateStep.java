@@ -30,6 +30,11 @@ public final class TemplateStep implements StepType<TemplateStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("to");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

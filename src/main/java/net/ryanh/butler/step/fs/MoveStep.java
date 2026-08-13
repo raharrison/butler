@@ -29,6 +29,11 @@ public final class MoveStep implements StepType<MoveStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("from", "to");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -38,6 +39,11 @@ public final class CronTrigger implements TriggerType<CronTrigger.Config> {
     @Override
     public String name() {
         return "schedule.cron";
+    }
+
+    @Override
+    public List<String> required() {
+        return List.of("expression");
     }
 
     @Override

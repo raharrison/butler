@@ -4,6 +4,7 @@ import net.ryanh.butler.config.ConfigLoader;
 import net.ryanh.butler.config.ConfigValidator;
 import net.ryanh.butler.config.Diagnostic;
 import net.ryanh.butler.config.Vocabulary;
+import net.ryanh.butler.spi.StepType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -153,6 +154,78 @@ class RegistryValidatorTest {
         assertTrue(d.message().contains("cannot use these parameters with control.log"),
                 d.message());
         assertTrue(d.message().contains("shout"), d.message());
+    }
+
+    @Test
+    @DisplayName("a parameter the step cannot run without is caught here, not at 3am on the fifth "
+            + "step")
+    void missingRequiredParameter() {
+        Diagnostic d = only("""
+                jobs:
+                  j:
+                    on: [{uses: manual}]
+                    steps:
+                      - uses: systemd.restart
+                        wait_active: 30s
+                """);
+        assertTrue(d.message().contains(
+                        "missing required parameter \"unit\" for step type \"systemd.restart\""),
+                d.message());
+        assertEquals(5, d.loc().line(), d.message());
+    }
+
+    @Test
+    @DisplayName("a trigger's required parameters are checked the same way")
+    void missingRequiredTriggerParameter() {
+        Diagnostic d = only("""
+                jobs:
+                  j:
+                    on:
+                      - uses: file.appeared
+                        settle: 10s
+                    steps: [{uses: control.log, message: hi}]
+                """);
+        assertTrue(d.message().contains(
+                        "missing required parameter \"dir\" for trigger type \"file.appeared\""),
+                d.message());
+    }
+
+    @Test
+    @DisplayName("presence is what is checked: a required value may be a ${...} only a run "
+            + "can resolve")
+    void aTemplatedRequiredValueIsPresent() {
+        assertEquals(List.of(), check("""
+                vars: { src: /a, dst: /b }
+                jobs:
+                  j:
+                    on: [{uses: manual}]
+                    steps:
+                      - uses: fs.copy
+                        from: ${vars.src}
+                        to: ${vars.dst}
+                """));
+    }
+
+    @Test
+    @DisplayName("every parameter a step declares required is one it actually has, and every "
+            + "type that refuses one at runtime declares it")
+    void requiredParametersMatchTheRecords() {
+        for (StepType<?> type : StepRegistry.discover().all()) {
+            List<String> names = Params.names(type.configType());
+            for (String required : type.required()) {
+                assertTrue(names.contains(required),
+                        type.name() + " requires \"" + required + "\", which is not one of its "
+                                + "parameters: " + names);
+            }
+        }
+        // The declaration and the step's own guard are two statements of one fact, so a step that
+        // refuses a parameter at runtime must say so where butler validate can see it.
+        assertEquals(List.of("dir", "keep"),
+                StepRegistry.discover().find("fs.prune").required());
+        assertEquals(List.of("url", "until"),
+                StepRegistry.discover().find("http.wait").required());
+        assertEquals(List.of("unit"),
+                StepRegistry.discover().find("systemd.restart").required());
     }
 
     @Test

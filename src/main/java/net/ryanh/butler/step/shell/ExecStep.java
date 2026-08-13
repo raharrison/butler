@@ -29,6 +29,11 @@ public final class ExecStep implements StepType<ExecStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("argv");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

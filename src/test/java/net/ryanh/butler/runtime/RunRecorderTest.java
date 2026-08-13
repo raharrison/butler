@@ -67,8 +67,7 @@ class RunRecorderTest {
     }
 
     /**
-     * One recorder per test: {@code record} prunes on a virtual thread, and only a single instance
-     * serialises that against everything else touching the index.
+     * Each {@code record} prunes before it returns, so what is on disk afterwards is settled.
      */
     private static void write(RunRecorder recorder, Instant... at) {
         for (Instant when : at) {

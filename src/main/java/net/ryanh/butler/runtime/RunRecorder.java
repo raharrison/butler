@@ -76,8 +76,15 @@ public final class RunRecorder {
     }
 
     /**
-     * Writes the record and its index line, then prunes on a virtual thread so a run never waits on
-     * retention.
+     * Writes the record and its index line, then enforces retention.
+     *
+     * <p>Retention runs on the caller's thread. It is a directory listing and a few deletions -
+     * tens of milliseconds against a job measured in seconds - and handing it to a thread nobody
+     * waits for bought that back at the cost of never running at all under {@code butler trigger},
+     * where the process exits before a daemon thread gets there.
+     *
+     * <p>Failing at either never fails the run that produced it: the work was done, and losing the
+     * note about it is worth a log line and no more.
      */
     public void record(Run run) {
         try {
@@ -86,7 +93,11 @@ public final class RunRecorder {
             log.error("could not record run {}: {}", run.id(), e.toString());
             return;
         }
-        Thread.ofVirtual().name("run-retention").start(this::prune);
+        try {
+            prune();
+        } catch (RuntimeException e) {
+            log.error("could not apply run retention: {}", e.toString());
+        }
     }
 
     /**

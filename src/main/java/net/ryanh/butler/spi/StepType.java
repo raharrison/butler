@@ -44,6 +44,19 @@ public interface StepType<C> {
     }
 
     /**
+     * Parameters the step cannot run without, so {@code butler validate} refuses a config missing
+     * one rather than leaving it to fail at 3am on the fifth step (DESIGN.md §1.6).
+     *
+     * <p>Presence is all that is checked: a value may be {@code ${...}} that only a run can
+     * resolve. A step still guards them in {@link #execute}, since a plugin may declare nothing
+     * and a rule too subtle for a list - {@code fs.template} taking {@code from:} or
+     * {@code content:} but not both - belongs there anyway.
+     */
+    default List<String> required() {
+        return List.of();
+    }
+
+    /**
      * Names this step injects into its own expressions, beside the context namespaces: what a
      * condition parameter sees of the probe in flight, and what {@code extract:} reads from the
      * result. {@code status}, {@code headers}, {@code body} and {@code json} for an HTTP step.

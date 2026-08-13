@@ -34,6 +34,11 @@ public final class WaitActiveStep implements StepType<WaitActiveStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("unit");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

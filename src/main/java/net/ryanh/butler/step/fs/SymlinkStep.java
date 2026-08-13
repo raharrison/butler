@@ -28,6 +28,11 @@ public final class SymlinkStep implements StepType<SymlinkStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("link", "target");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

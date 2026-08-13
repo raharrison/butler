@@ -38,6 +38,11 @@ public final class PruneStep implements StepType<PruneStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("dir", "keep");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

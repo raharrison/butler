@@ -34,6 +34,11 @@ public final class ReadStep implements StepType<ReadStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("path");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

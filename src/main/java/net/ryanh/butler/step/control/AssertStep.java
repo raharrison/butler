@@ -24,6 +24,11 @@ public final class AssertStep implements StepType<AssertStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("that");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }
