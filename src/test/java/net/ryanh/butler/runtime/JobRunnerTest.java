@@ -780,6 +780,36 @@ class JobRunnerTest {
         }
 
         @Test
+        @DisplayName("a run cancelled before it starts observes nothing either")
+        void withdrawnBeforeItObserves() {
+            Path observed = stateDir.resolve("observed.txt");
+            String yaml = """
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        discover:
+                          - name: Ask the host
+                            uses: fs.template
+                            content: observed
+                            to: %s
+                            mkdirs: true
+                            extract:
+                              deployed_version: path
+                        steps: [{uses: control.log, message: hi}]
+                    """.formatted(observed.toString().replace('\\', '/'));
+            Cancellation cancel = new Cancellation();
+            cancel.cancel("butler is shutting down");
+
+            Run run = runner(yaml, cancel).run(config(yaml).config().jobs().get("j"),
+                    new Event("manual", Map.of(), null));
+
+            assertEquals(Run.Status.CANCELLED, run.status());
+            assertTrue(run.discover().isEmpty());
+            assertFalse(Files.exists(observed),
+                    "discovery runs steps on the host, and a withdrawn run has nobody to tell");
+        }
+
+        @Test
         @DisplayName("a cancelled run leaves no audit record either")
         void noRunRecord() {
             String yaml = yaml(stateDir.resolve("started.txt"));

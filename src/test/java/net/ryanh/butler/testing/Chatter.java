@@ -39,6 +39,7 @@ public final class Chatter {
             case "chatter" -> chatter(Long.parseLong(args[1]));
             case "sleep" -> Thread.sleep(Long.parseLong(args[1]));
             case "spawn" -> spawn(Path.of(args[1]));
+            case "orphan" -> orphan();
             default -> throw new IllegalArgumentException("no such mode: " + args[0]);
         }
     }
@@ -76,5 +77,16 @@ public final class Chatter {
         Process child = new ProcessBuilder(argv("sleep", "60000")).start();
         Files.writeString(pidFile, String.valueOf(child.pid()));
         Thread.sleep(60_000);
+    }
+
+    /**
+     * Starts a child that inherits these pipes and outlives this process, then exits at once, the
+     * way a script launching a service in the background does.
+     */
+    private static void orphan() throws IOException {
+        new ProcessBuilder(argv("sleep", "10000"))
+                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
+                .start();
     }
 }

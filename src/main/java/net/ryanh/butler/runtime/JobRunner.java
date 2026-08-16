@@ -21,6 +21,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Runs a job for real: the step loop, retries, timeouts, lifecycle hooks and the run status rules
@@ -36,6 +37,9 @@ public final class JobRunner {
     private static final DateTimeFormatter RUN_ID =
             DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss", Locale.ROOT)
                     .withZone(ZoneOffset.UTC);
+
+    private static final AtomicInteger SEQUENCE =
+            new AtomicInteger(ThreadLocalRandom.current().nextInt(0x10000));
 
     private final RunEnvironment env;
     private final Cancellation cancel;
@@ -89,6 +93,10 @@ public final class JobRunner {
             MDC.remove("run_id");
             MDC.remove("job");
             MDC.remove("step");
+            // The run has a status to show for the interrupt, so it stops here.
+            if (cancel.isCancelled()) {
+                Thread.interrupted();
+            }
         }
     }
 
@@ -109,13 +117,14 @@ public final class JobRunner {
      */
     public Adoption adopt(JobDef job, Event candidate) {
         Instant now = Instant.now();
+        String id = runId(now);
         Event event = candidate == null ? new Event("adopt", Map.of(), null) : candidate;
         StateStore.JobState persisted = env.state().read(job.name());
 
-        MDC.put("run_id", runId(now));
+        MDC.put("run_id", id);
         MDC.put("job", job.name());
         try {
-            Context ctx = Context.forRun(env, job, event, persisted.values(), runId(now), now);
+            Context ctx = Context.forRun(env, job, event, persisted.values(), id, now);
             // No deadline: adopting is not a run, so a step is held only to its own timeout.
             List<Plan.Entry> discovered = Discovery.run(job, env.steps(), ctx, null);
 
@@ -137,7 +146,9 @@ public final class JobRunner {
         Context ctx = Context.forRun(env, job, event, persisted.values(), id, started);
         Instant deadline = job.timeout() == null ? null : started.plus(job.timeout());
 
-        List<Plan.Entry> discovered = Discovery.run(job, env.steps(), ctx, deadline);
+        List<Plan.Entry> discovered = cancel.isCancelled()
+                ? List.of()
+                : Discovery.run(job, env.steps(), ctx, deadline);
         List<Run.Step> steps = new ArrayList<>();
 
         Plan.Decision decision = cancel.isCancelled() ? null : decide(job, ctx);
@@ -479,10 +490,12 @@ public final class JobRunner {
     }
 
     /**
-     * Sortable, unique enough for one host, and readable in a file name.
+     * Sortable, unique enough for one host, and readable in a file name. The suffix is stepped
+     * rather than redrawn, so two runs in the same second cannot overwrite one another's record,
+     * and starts somewhere random so two processes over one state directory do not share a count.
      */
     private static String runId(Instant started) {
         return RUN_ID.format(started.truncatedTo(ChronoUnit.SECONDS)) + "-"
-                + Integer.toHexString(ThreadLocalRandom.current().nextInt(0x1000, 0x10000));
+                + String.format(Locale.ROOT, "%04x", SEQUENCE.getAndIncrement() & 0xffff);
     }
 }

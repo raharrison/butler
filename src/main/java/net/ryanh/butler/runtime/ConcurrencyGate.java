@@ -75,6 +75,9 @@ public final class ConcurrencyGate {
         }
 
         synchronized Admission enter(ConcurrencyDef policy, Cancellation cancellation) {
+            if (cancellation.isCancelled()) {
+                return new Admission(null, withdrawn(cancellation));
+            }
             Ticket mine = new Ticket(this, cancellation);
             if (running == null && waiting.isEmpty()) {
                 running = mine;
@@ -105,7 +108,9 @@ public final class ConcurrencyGate {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     waiting.remove(mine);
-                    return new Admission(null, "interrupted while waiting for its turn");
+                    notifyAll();
+                    return new Admission(null, cancellation.isCancelled()
+                            ? withdrawn(cancellation) : "interrupted while waiting for its turn");
                 }
             }
             if (mine.displaced) {
@@ -124,6 +129,10 @@ public final class ConcurrencyGate {
                 waiting.remove(ticket);
             }
             notifyAll();
+        }
+
+        private static String withdrawn(Cancellation cancellation) {
+            return cancellation.reason() == null ? "the run was cancelled" : cancellation.reason();
         }
 
         /**

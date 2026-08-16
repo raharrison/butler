@@ -42,9 +42,13 @@ public final class Butler {
 
     private final Semaphore slots;
     private final ConcurrencyGate gate = new ConcurrencyGate();
-    private final List<Watcher> watchers = new ArrayList<>();
     private final List<InFlight> runs = new ArrayList<>();
     private final CountDownLatch stopped = new CountDownLatch(1);
+
+    /**
+     * Guarded by {@link #runs}, the monitor for everything the lifecycle touches.
+     */
+    private final List<Watcher> watchers = new ArrayList<>();
 
     /**
      * Guarded by {@link #runs}, so an event arriving as the drain takes its snapshot is either in
@@ -79,9 +83,14 @@ public final class Butler {
                 }
                 try {
                     Object params = Params.bind(type.configType(), def.params());
-                    watchers.add(type.start(params, event -> handle(job, event),
+                    Watcher watcher = type.start(params, event -> handle(job, event),
                             new Triggering(job.name(), env.config().settings().pollInterval(),
-                                    dryRun)));
+                                    dryRun));
+                    if (!register(watcher)) {
+                        watcher.stop();
+                        log.info("butler is stopping; job {} is not being watched", job.name());
+                        return;
+                    }
                     log.info("watching {} for job {}", def.uses(), job.name());
                 } catch (RuntimeException e) {
                     log.error("job {} could not start its {} trigger: {}", job.name(), def.uses(),
@@ -95,6 +104,19 @@ public final class Butler {
     }
 
     /**
+     * @return false if the drain has already taken its snapshot, so this watcher must stop itself
+     */
+    private boolean register(Watcher watcher) {
+        synchronized (runs) {
+            if (stopping) {
+                return false;
+            }
+            watchers.add(watcher);
+            return true;
+        }
+    }
+
+    /**
      * Stops the watchers, lets the runs already going finish within {@code settings.shutdown_grace}
      * and cancels whatever outlasts it.
      *
@@ -105,11 +127,13 @@ public final class Butler {
         // A watcher part-way through emitting could otherwise add a run just after the snapshot,
         // and the drain would leave it to be killed halfway.
         List<InFlight> inFlight;
+        List<Watcher> started;
         synchronized (runs) {
             stopping = true;
             inFlight = List.copyOf(runs);
+            started = List.copyOf(watchers);
         }
-        watchers.forEach(Watcher::stop);
+        started.forEach(Watcher::stop);
         if (inFlight.isEmpty()) {
             finish();
             return;
@@ -199,8 +223,12 @@ public final class Butler {
      * must not take a place in the group first: under {@code queue} it would wait out whatever is
      * deploying, and under {@code cancel_previous} it would displace it. A dry run asks nothing,
      * because reporting every firing is the point of one.
+     *
+     * <p>The cancellation is given this thread here rather than by {@link JobRunner}: the wait for
+     * a turn is before the run starts, and is the longest thing a shutdown has to get out of.
      */
     private void admitted(JobDef job, Event event, Cancellation cancel) {
+        cancel.on(Thread.currentThread());
         try {
             if (!dryRun && !JobRunner.isNewWork(env, job, event)) {
                 log.info("job {} has already processed this event, dropping it (dedupe key {})",

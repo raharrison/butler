@@ -38,6 +38,12 @@ public final class ForkingProcessRunner implements ProcessRunner {
      */
     private static final Duration GRACE = Duration.ofSeconds(2);
 
+    /**
+     * How long the last of a process's output is waited for once it has gone. The pipe holds at
+     * most a buffer's worth by then, so only a process that left the pipe held reaches this.
+     */
+    private static final Duration LINGER = Duration.ofSeconds(2);
+
     @Override
     public Completed run(Command command) throws IOException {
         if (command.argv().isEmpty()) {
@@ -80,12 +86,14 @@ public final class ForkingProcessRunner implements ProcessRunner {
     }
 
     /**
-     * Waits for the last of the output to arrive and packages it up.
+     * Waits for the last of the output to arrive and packages it up. One deadline for both
+     * streams, so a process holding both costs the wait once.
      */
     private static Completed finish(Drain out, Drain err, Instant started, int exitCode,
                                     boolean timedOut) {
-        out.join();
-        err.join();
+        Instant lastCall = Instant.now().plus(LINGER);
+        out.join(lastCall);
+        err.join(lastCall);
         return new Completed(exitCode, out.text(), err.text(),
                 Duration.between(started, Instant.now()), timedOut);
     }
@@ -139,18 +147,26 @@ public final class ForkingProcessRunner implements ProcessRunner {
                 log.debug("stopped reading {} of a process: {}", name, e.toString());
             }
         });
-        return new Drain(thread, ring);
+        return new Drain(name, thread, ring);
     }
 
-    private record Drain(Thread thread, Ring ring) {
+    private record Drain(String name, Thread thread, Ring ring) {
         /**
-         * The pipes close when the process dies, so this ends on its own; an interrupt here would
-         * discard output that has already been read.
+         * A pipe closes when the last holder does, which is after the process exits if it left
+         * something in the background holding it, so the wait is bounded. The reader is abandoned
+         * rather than closed out of: closing the read end waits on the same read on some
+         * platforms, which is why {@link Ring} is synchronized.
          */
-        void join() {
+        void join(Instant deadline) {
+            Duration left = Duration.between(Instant.now(), deadline);
             try {
-                thread.join();
+                if (left.isPositive() && thread.join(left)) {
+                    return;
+                }
+                log.warn("the process left something running that still holds its {}, so only the "
+                        + "output that had arrived is reported", name);
             } catch (InterruptedException e) {
+                // An interrupt here would discard output that has already been read.
                 Thread.currentThread().interrupt();
             }
         }

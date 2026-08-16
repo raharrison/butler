@@ -87,6 +87,19 @@ class ProcessRunnerTest {
     }
 
     @Test
+    @DisplayName("a process that leaves something holding its pipes does not hang the step")
+    void anOrphanHoldingThePipeDoesNotHangTheStep() throws Exception {
+        // No timeout, so nothing else would end this.
+        Instant started = Instant.now();
+        ProcessRunner.Completed done = runner.run(command("orphan"));
+
+        assertEquals(0, done.exitCode());
+        assertFalse(done.timedOut(), "the process exited on its own; only its pipes lingered");
+        assertTrue(Duration.between(started, Instant.now()).compareTo(Duration.ofSeconds(9)) < 0,
+                "the step waited on output the process it started is no longer sending");
+    }
+
+    @Test
     void runsInTheGivenDirectoryWithTheGivenEnvironment(@TempDir Path dir) throws Exception {
         ProcessRunner.Command command = new ProcessRunner.Command(
                 Chatter.argv("echo", "wherever"), dir, Map.of("BUTLER_TEST", "1"), null, null);

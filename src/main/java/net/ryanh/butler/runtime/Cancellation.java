@@ -23,8 +23,15 @@ public final class Cancellation {
         return new Cancellation();
     }
 
+    /**
+     * Names the thread to interrupt. A run cancelled before it got here is interrupted now; both
+     * fields are volatile, so a cancel racing this is delivered by one side or the other.
+     */
     public void on(Thread runThread) {
         this.thread = runThread;
+        if (cancelled.get()) {
+            runThread.interrupt();
+        }
     }
 
     public void cancel(String why) {

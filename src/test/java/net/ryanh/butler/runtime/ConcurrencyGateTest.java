@@ -168,6 +168,51 @@ class ConcurrencyGateTest {
     }
 
     @Test
+    @DisplayName("a run withdrawn while it queues is let go, and the queue behind it moves up")
+    void cancellingAWaiterLetsItGo() throws InterruptedException {
+        JobDef job = job("""
+                    concurrency: {mode: queue, queue_newest_only: false}
+                """);
+
+        Entrant running = enter(job, "running");
+        assertTrue(running.awaitAdmission().admitted());
+
+        Entrant second = enter(job, "second");
+        second.awaitQueued();
+        Entrant third = enter(job, "third");
+        third.awaitQueued();
+
+        // A waiter has no step to interrupt, but it does have a park to get out of.
+        second.cancel.on(second.thread);
+        second.cancel.cancel("butler is shutting down");
+
+        ConcurrencyGate.Admission withdrawn = second.awaitAdmission();
+        assertFalse(withdrawn.admitted());
+        assertEquals("butler is shutting down", withdrawn.reason());
+
+        running.leave();
+        assertTrue(third.awaitAdmission().admitted(),
+                "the one behind it still gets its turn");
+    }
+
+    @Test
+    @DisplayName("a run already withdrawn takes no place in the group at all")
+    void cancelledBeforeItAsks() throws InterruptedException {
+        JobDef job = job("");
+
+        Entrant running = enter(job, "running");
+        assertTrue(running.awaitAdmission().admitted());
+
+        Entrant arriving = new Entrant(job, "arriving");
+        arriving.cancel.cancel("butler is shutting down");
+        arriving.thread.start();
+
+        ConcurrencyGate.Admission refused = arriving.awaitAdmission();
+        assertFalse(refused.admitted());
+        assertEquals("butler is shutting down", refused.reason());
+    }
+
+    @Test
     @DisplayName("groups do not block each other, and a group defaults to the job name")
     void groupsAreIndependent() throws InterruptedException {
         JobDef mine = job("");

@@ -205,7 +205,7 @@ public final class RunRecorder {
             return List.of();
         }
         List<Path> found = new ArrayList<>();
-        try (DirectoryStream<Path> days = Files.newDirectoryStream(runsDir, Files::isDirectory)) {
+        try (DirectoryStream<Path> days = Files.newDirectoryStream(runsDir, RunRecorder::isDay)) {
             for (Path day : days) {
                 try (DirectoryStream<Path> files = Files.newDirectoryStream(day, "*.json")) {
                     files.forEach(found::add);
@@ -219,12 +219,14 @@ public final class RunRecorder {
         return found;
     }
 
+    private static boolean isDay(Path path) {
+        return Files.isDirectory(path)
+                && DAY_DIR.matcher(path.getFileName().toString()).matches();
+    }
+
     private void pruneEmptyDays() {
-        try (DirectoryStream<Path> days = Files.newDirectoryStream(runsDir, Files::isDirectory)) {
+        try (DirectoryStream<Path> days = Files.newDirectoryStream(runsDir, RunRecorder::isDay)) {
             for (Path day : days) {
-                if (!DAY_DIR.matcher(day.getFileName().toString()).matches()) {
-                    continue;
-                }
                 try (DirectoryStream<Path> contents = Files.newDirectoryStream(day)) {
                     if (!contents.iterator().hasNext()) {
                         Files.delete(day);
@@ -279,7 +281,8 @@ public final class RunRecorder {
     private static String idIn(String line) {
         try {
             Object parsed = LINES.readValue(line, Map.class);
-            return parsed instanceof Map<?, ?> m ? String.valueOf(m.get("id")) : null;
+            return parsed instanceof Map<?, ?> m && m.get("id") != null
+                    ? String.valueOf(m.get("id")) : null;
         } catch (RuntimeException e) {
             return null;
         }
