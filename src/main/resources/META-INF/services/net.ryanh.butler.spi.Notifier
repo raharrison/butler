@@ -2,3 +2,4 @@ net.ryanh.butler.notify.SlackNotifier
 net.ryanh.butler.notify.WebhookNotifier
 net.ryanh.butler.notify.DiscordNotifier
 net.ryanh.butler.notify.NtfyNotifier
+net.ryanh.butler.notify.PushoverNotifier

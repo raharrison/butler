@@ -49,6 +49,9 @@ jobs:
         link: /srv/apps/api/current
         target: ${steps.symlink.previous_target}
         when: exists(steps.symlink.previous_target)
+
+    persist:
+      deployed_version: ${trigger.version}
 ```
 
 No bash, no version comparison, no "is it up yet" polling loop. When the vocabulary runs out,
@@ -307,12 +310,13 @@ build you are running. Full parameter tables, defaults and outputs are in
 
 ### Notifiers
 
-| `uses`           | Parameters                                                                             |
-|------------------|----------------------------------------------------------------------------------------|
-| `notify.slack`   | `webhook` (required), `channel`, `username`, `icon_emoji`                              |
-| `notify.discord` | `webhook` (required), `username`                                                       |
-| `notify.ntfy`    | `topic` (required), `server` (default `https://ntfy.sh`), `title`, `priority`, `token` |
-| `notify.webhook` | `url` (required), `field` (default `text`), `headers`                                  |
+| `uses`            | Parameters                                                                             |
+|-------------------|----------------------------------------------------------------------------------------|
+| `notify.slack`    | `webhook` (required), `channel`, `username`, `icon_emoji`                              |
+| `notify.discord`  | `webhook` (required), `username`                                                       |
+| `notify.ntfy`     | `topic` (required), `server` (default `https://ntfy.sh`), `title`, `priority`, `token` |
+| `notify.webhook`  | `url` (required), `field` (default `text`), `headers`                                  |
+| `notify.pushover` | `token` (required), `user` (required), `title`, `priority`, `sound`                    |
 
 ### Expressions
 

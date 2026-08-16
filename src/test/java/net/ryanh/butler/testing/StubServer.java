@@ -9,6 +9,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 
 /**
@@ -17,9 +18,11 @@ import java.util.function.Function;
 public final class StubServer implements AutoCloseable {
 
     /**
-     * One request as the server saw it.
+     * One request as the server saw it. {@code headers} is the exchange's own
+     * {@code com.sun.net.httpserver.Headers}, so a lookup by name is case-insensitive.
      */
-    public record Received(String method, String path, String body) {
+    public record Received(String method, String path, String body,
+                           Map<String, List<String>> headers) {
     }
 
     /**
@@ -68,7 +71,8 @@ public final class StubServer implements AutoCloseable {
     private void handle(HttpExchange exchange) throws IOException {
         Received request = new Received(exchange.getRequestMethod(),
                 exchange.getRequestURI().getPath(),
-                new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8),
+                exchange.getRequestHeaders());
         synchronized (this) {
             received.add(request);
         }

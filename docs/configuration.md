@@ -793,6 +793,20 @@ Posts the message as JSON to any URL, for a service with no notifier of its own.
 | `field`   | text    | `text`  | The JSON field the message goes in. |
 | `headers` | mapping | none    |                                     |
 
+#### `notify.pushover`
+
+Posts to the [Pushover](https://pushover.net) API, which takes the message and everything else as
+form fields rather than JSON. There is one API endpoint, so unlike the other channels here there is
+no `server:`/`url:` to point elsewhere.
+
+| Parameter  | Type |              |                                             |
+|------------|------|--------------|---------------------------------------------|
+| `token`    | text | **required** | The application's API token.                |
+| `user`     | text | **required** | The user or group key to notify.            |
+| `title`    | text |              |                                             |
+| `priority` | text |              | Pushover's `-2` to `2` priority, as text.   |
+| `sound`    | text |              | One of Pushover's notification sound names. |
+
 ---
 
 ## The expression language
