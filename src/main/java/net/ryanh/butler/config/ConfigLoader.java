@@ -197,6 +197,10 @@ public final class ConfigLoader {
             c.diagnostics().error("/settings/run_retention/count",
                     "must not be negative, found " + retention.count());
         }
+        if (poll != null && poll.isZero()) {
+            c.diagnostics().error("/settings/poll_interval",
+                    "must be more than zero: a polling trigger would spin instead of sleeping");
+        }
         return new ButlerConfig.Settings(
                 stateDir, logFormat, maxRuns, poll, grace, retention, plugins);
     }

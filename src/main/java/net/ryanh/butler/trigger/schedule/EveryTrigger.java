@@ -35,6 +35,11 @@ public final class EveryTrigger implements TriggerType<EveryTrigger.Config> {
 
     @Override
     public Watcher start(Config config, EventSink sink, TriggerContext ctx) {
+        if (config.interval().isZero()) {
+            throw new IllegalArgumentException(
+                    "schedule.every needs an interval of more than zero, or it would fire in a "
+                            + "loop rather than on a schedule");
+        }
         AtomicBoolean running = new AtomicBoolean(true);
         Thread thread = Thread.ofVirtual()
                 .name("trigger-schedule.every-" + ctx.job())

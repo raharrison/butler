@@ -35,6 +35,11 @@ public final class RunStep implements StepType<RunStep.Config> {
     }
 
     @Override
+    public List<String> required() {
+        return List.of("script");
+    }
+
+    @Override
     public Class<Config> configType() {
         return Config.class;
     }

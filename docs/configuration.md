@@ -38,7 +38,7 @@ A repeated key is an error rather than last-one-wins.
 | `state_dir`           | `/var/lib/butler`        | Where per-job state and run records are written.                               |
 | `log_format`          | `json`                   | `json` or `text`. Applies to the daemon; interactive commands are always text. |
 | `max_concurrent_runs` | `4`                      | Global bound on runs in flight, across all jobs. At least 1.                   |
-| `poll_interval`       | `5s`                     | Default polling interval for polling triggers.                                 |
+| `poll_interval`       | `5s`                     | Default polling interval for polling triggers. Must be more than zero.         |
 | `shutdown_grace`      | `2m`                     | How long a shutdown lets in-flight runs finish before cancelling them.         |
 | `run_retention`       | `{count: 200, age: 30d}` | How much run history to keep. Both apply: whichever drops a record first wins. |
 | `plugins_dir`         | none                     | Directory of jars holding third-party steps, triggers or notifiers.            |
@@ -365,6 +365,9 @@ restart into a deployment.
 |------------|----------|---------|
 | `interval` | duration | `1h`    |
 
+The interval has to be more than zero, or the trigger would fire in a loop rather than on a
+schedule.
+
 **Facts:** `fired_at`. **Dedupe key:** none, so every firing is new work.
 
 ### `schedule.cron`
@@ -471,15 +474,19 @@ Both steps report **Outputs:** `stdout`, `stderr`, `exit_code`. A non-zero exit 
 the last line of output in the message. Output is captured into a bounded buffer that keeps the
 tail, so a chatty process costs nothing.
 
+A script that starts something in the background hands it the same pipes, so the output is still
+open after the script itself has finished. The step waits a moment for the last of it, then reports
+what arrived and logs that it did; it does not wait for the service to stop.
+
 #### `shell.run`
 
 Run a script through a shell. The escape hatch of the whole design, and it runs with the daemon's
 privileges unless `run_as:` says otherwise.
 
-| Parameter | Type | Default   |
-|-----------|------|-----------|
-| `script`  | text | empty     |
-| `shell`   | text | `/bin/sh` |
+| Parameter | Type | Default      |
+|-----------|------|--------------|
+| `script`  | text | **required** |
+| `shell`   | text | `/bin/sh`    |
 
 The script is interpolated like any other value, so a shell variable is written `$${HOME}`.
 
