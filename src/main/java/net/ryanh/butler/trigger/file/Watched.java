@@ -1,5 +1,6 @@
 package net.ryanh.butler.trigger.file;
 
+import net.ryanh.butler.spi.TriggerContext;
 import net.ryanh.butler.util.Literals;
 
 import java.io.IOException;
@@ -109,6 +110,17 @@ final class Watched {
     static String dedupeKey(Path file, Snapshot snapshot) {
         return Literals.path(file.toAbsolutePath()) + ":" + snapshot.size() + ":"
                 + snapshot.modified();
+    }
+
+    /**
+     * The trigger's own {@code poll_interval:} if it is set and positive, else the daemon's
+     * default ({@code settings.poll_interval}). A zero or negative override is treated as unset
+     * rather than refused: the daemon default gets a validate-time check for this
+     * (`ConfigLoader`), but a per-trigger override has no equivalent hook to refuse it from.
+     */
+    static Duration pollInterval(Duration override, TriggerContext ctx) {
+        return override != null && !override.isZero() && !override.isNegative()
+                ? override : ctx.pollInterval();
     }
 
     static String sha256(Path file) throws IOException {

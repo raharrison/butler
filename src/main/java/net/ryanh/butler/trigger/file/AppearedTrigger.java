@@ -25,14 +25,16 @@ public final class AppearedTrigger implements TriggerType<AppearedTrigger.Config
     private static final Logger log = LoggerFactory.getLogger(AppearedTrigger.class);
 
     /**
-     * @param match     names to fire for; every named group becomes a {@code trigger.*} fact
-     * @param settle    how long a file's size and modification time must hold still first
-     * @param orderBy   ranks candidates, so only the greatest fires and dropping an old artifact
-     *                  into the directory cannot trigger a downgrade
-     * @param onStartup what to do about what is already there when the daemon starts
+     * @param match        names to fire for; every named group becomes a {@code trigger.*} fact
+     * @param settle       how long a file's size and modification time must hold still first
+     * @param orderBy      ranks candidates, so only the greatest fires and dropping an old
+     *                     artifact into the directory cannot trigger a downgrade
+     * @param onStartup    what to do about what is already there when the daemon starts
+     * @param pollInterval how often to re-scan the directory; {@code settings.poll_interval} unless
+     *                     set here
      */
     public record Config(Path dir, Pattern match, Duration settle, String orderBy,
-                         OnStartup onStartup) {
+                         OnStartup onStartup, Duration pollInterval) {
         public Config {
             match = match != null && match.pattern().isBlank() ? null : match;
             settle = settle == null ? Duration.ofSeconds(10) : settle;
@@ -123,7 +125,7 @@ public final class AppearedTrigger implements TriggerType<AppearedTrigger.Config
                 sink.emit(candidate.event());
             }
             try {
-                Thread.sleep(ctx.pollInterval());
+                Thread.sleep(Watched.pollInterval(config.pollInterval(), ctx));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;

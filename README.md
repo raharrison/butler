@@ -1,7 +1,13 @@
 # Butler
 
+[![Build](https://github.com/raharrison/butler/actions/workflows/build.yml/badge.svg)](https://github.com/raharrison/butler/actions/workflows/build.yml)
+[![Java 25](https://img.shields.io/badge/Java-25-orange?logo=openjdk&logoColor=white)](https://openjdk.org/)
+![Single jar](https://img.shields.io/badge/deploy-single%20jar-blue)
+![Runtime deps](https://img.shields.io/badge/dependencies-picocli%20%C2%B7%20Jackson-lightgrey)
+
 A single-binary Java daemon that sits on a server, watches for events, and runs declarative
-pipelines in response.
+pipelines in response. No agents to install on the targets, no orchestration control plane,
+no bash gluing steps together, just one jar, one YAML file and a systemd unit.
 
 The motivating case is rolling deployments. CI drops a new artifact into a directory on the server;
 Butler notices the new version, stages it, repoints a symlink, restarts the service, confirms the
@@ -104,7 +110,7 @@ sudo install -D -m0755 butler         /usr/bin/butler
 ```
 
 The full install layout, the systemd unit and the sudoers snippet are in
-[docs/operating.md](docs/operating.md).
+[docs/OPERATING.md](docs/OPERATING.md).
 
 ## Getting started
 
@@ -254,7 +260,7 @@ Every step takes the same reserved keys, whatever its type:
 Those names are reserved and can never be a step's own parameter, along with `extract:`, which is
 valid only inside a `discover:` block.
 
-`docs/configuration.md` is the full reference for all of it.
+`docs/CONFIGURATION.md` is the full reference for all of it.
 
 ---
 
@@ -264,11 +270,11 @@ valid only inside a `discover:` block.
 
 | Trigger                                                 | Fires when                            | Key parameters                                                |
 |---------------------------------------------------------|---------------------------------------|---------------------------------------------------------------|
-| [`file.appeared`](docs/configuration.md#fileappeared)   | a new file settles in a directory     | `dir` (required), `match`, `settle`, `order_by`, `on_startup` |
-| [`file.changed`](docs/configuration.md#filechanged)     | one file's contents change            | `path` (required), `settle`, `on_startup`                     |
-| [`schedule.every`](docs/configuration.md#scheduleevery) | a fixed interval elapses              | `interval` (default `1h`)                                     |
-| [`schedule.cron`](docs/configuration.md#schedulecron)   | a 5-field cron expression comes round | `expression` (required), `timezone`                           |
-| [`manual`](docs/configuration.md#manual)                | `butler trigger` asks it to           | none                                                          |
+| [`file.appeared`](docs/CONFIGURATION.md#fileappeared)   | a new file settles in a directory     | `dir` (required), `match`, `settle`, `order_by`, `on_startup` |
+| [`file.changed`](docs/CONFIGURATION.md#filechanged)     | one file's contents change            | `path` (required), `settle`, `on_startup`                     |
+| [`schedule.every`](docs/CONFIGURATION.md#scheduleevery) | a fixed interval elapses              | `interval` (default `1h`)                                     |
+| [`schedule.cron`](docs/CONFIGURATION.md#schedulecron)   | a 5-field cron expression comes round | `expression` (required), `timezone`                           |
+| [`manual`](docs/CONFIGURATION.md#manual)                | `butler trigger` asks it to           | none                                                          |
 
 A trigger's parameters are never templated: a watcher starts before any event exists, so there is
 no run to resolve `${...}` against.
@@ -277,7 +283,7 @@ no run to resolve `${...}` against.
 
 `butler steps` prints this from the registry with every parameter, so it never falls behind the
 build you are running. Full parameter tables, defaults and outputs are in
-[docs/configuration.md](docs/configuration.md#step-reference).
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md#step-reference).
 
 | Step                  | What it does                                                                    |
 |-----------------------|---------------------------------------------------------------------------------|
@@ -529,8 +535,8 @@ is not to echo them; see [DESIGN.md §11](docs/DESIGN.md).
 
 |                                                |                                                                                          |
 |------------------------------------------------|------------------------------------------------------------------------------------------|
-| [docs/configuration.md](docs/configuration.md) | The config reference: every key, every trigger and step with its parameters and outputs. |
-| [docs/operating.md](docs/operating.md)         | systemd, install layout, sudoers, logging, the state directory, plugins.                 |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | The config reference: every key, every trigger and step with its parameters and outputs. |
+| [docs/OPERATING.md](docs/OPERATING.md)         | systemd, install layout, sudoers, logging, the state directory, plugins.                 |
 | [docs/DESIGN.md](docs/DESIGN.md)               | Why it is shaped this way. Authoritative for the model, and what is deliberately absent. |
 
 `butler steps` is generated from the registry, so it documents the vocabulary this build actually

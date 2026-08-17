@@ -27,10 +27,12 @@ public final class ChangedTrigger implements TriggerType<ChangedTrigger.Config> 
     private static final Logger log = LoggerFactory.getLogger(ChangedTrigger.class);
 
     /**
-     * @param onStartup {@code all} means the same as {@code latest} here, since one path has only
-     *                  ever one candidate
+     * @param onStartup    {@code all} means the same as {@code latest} here, since one path has
+     *                     only ever one candidate
+     * @param pollInterval how often to re-check the file; {@code settings.poll_interval} unless
+     *                     set here
      */
-    public record Config(Path path, Duration settle, OnStartup onStartup) {
+    public record Config(Path path, Duration settle, OnStartup onStartup, Duration pollInterval) {
         public Config {
             settle = settle == null ? Duration.ofSeconds(10) : settle;
             onStartup = onStartup == null ? OnStartup.LATEST : onStartup;
@@ -95,7 +97,7 @@ public final class ChangedTrigger implements TriggerType<ChangedTrigger.Config> 
                 log.warn("could not read {}: {}", config.path(), e.toString());
             }
             try {
-                Thread.sleep(ctx.pollInterval());
+                Thread.sleep(Watched.pollInterval(config.pollInterval(), ctx));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;

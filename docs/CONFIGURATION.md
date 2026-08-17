@@ -311,13 +311,14 @@ Fires when a new file settles in a directory. The trigger the main use case rest
   on_startup: latest
 ```
 
-| Parameter    | Type                        | Default    |                                                                 |
-|--------------|-----------------------------|------------|-----------------------------------------------------------------|
-| `dir`        | path                        |            | **required.** Directory to watch. Not recursive.                |
-| `match`      | regex                       | every file | Matched against the whole file name. Named groups become facts. |
-| `settle`     | duration                    | `10s`      | Size and mtime must be unchanged this long before firing.       |
-| `order_by`   | *condition*                 |            | Ranks candidates over their own facts. Only the greatest fires. |
-| `on_startup` | `latest` \| `none` \| `all` | `latest`   | What to do about files already there when the daemon starts.    |
+| Parameter       | Type                        | Default                  |                                                                                     |
+|-----------------|-----------------------------|--------------------------|-------------------------------------------------------------------------------------|
+| `dir`           | path                        |                          | **required.** Directory to watch. Not recursive.                                    |
+| `match`         | regex                       | every file               | Matched against the whole file name. Named groups become facts.                     |
+| `settle`        | duration                    | `10s`                    | Size and mtime must be unchanged this long before firing.                           |
+| `order_by`      | *condition*                 |                          | Ranks candidates over their own facts. Only the greatest fires.                     |
+| `on_startup`    | `latest` \| `none` \| `all` | `latest`                 | What to do about files already there when the daemon starts.                        |
+| `poll_interval` | duration                    | `settings.poll_interval` | How often to re-scan `dir`. Overrides the daemon-wide default for this one watcher. |
 
 **Facts:** `path`, `name`, `dir`, `size`, `modified`, plus every named capture group in `match`.
 **Dedupe key:** absolute path, size and mtime, so the same file rewritten is new work.
@@ -341,11 +342,12 @@ config-management tool rewriting a file every hour with the same contents redepl
   settle: 5s
 ```
 
-| Parameter    | Type                        | Default  |                                                                        |
-|--------------|-----------------------------|----------|------------------------------------------------------------------------|
-| `path`       | path                        |          | **required.** The one file to watch.                                   |
-| `settle`     | duration                    | `10s`    | Size and mtime must be unchanged this long before it is read.          |
-| `on_startup` | `latest` \| `none` \| `all` | `latest` | `none` waits for a change; the other two report what is already there. |
+| Parameter       | Type                        | Default                  |                                                                                       |
+|-----------------|-----------------------------|--------------------------|---------------------------------------------------------------------------------------|
+| `path`          | path                        |                          | **required.** The one file to watch.                                                  |
+| `settle`        | duration                    | `10s`                    | Size and mtime must be unchanged this long before it is read.                         |
+| `on_startup`    | `latest` \| `none` \| `all` | `latest`                 | `none` waits for a change; the other two report what is already there.                |
+| `poll_interval` | duration                    | `settings.poll_interval` | How often to re-check `path`. Overrides the daemon-wide default for this one watcher. |
 
 **Facts:** `path`, `name`, `dir`, `size`, `modified`, `sha256`.
 **Dedupe key:** absolute path and content hash.
@@ -645,7 +647,7 @@ takes the application down.
 ### `systemd`
 
 The verbs that mutate a unit put `sudo` in front by default, matching the sudoers allowlist in
-[operating.md](operating.md#privileges). That is separate from `run_as:`, which says which user to
+[OPERATING.md](OPERATING.md#privileges). That is separate from `run_as:`, which says which user to
 become rather than that root is required. `is-active` and `show`, which `wait_active`, `status` and
 every preflight check use, are read-only and run as the daemon's own user.
 

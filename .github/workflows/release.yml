@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir -p release
           cp build/libs/butler-${{ steps.version.outputs.version }}-all.jar release/butler.jar
-          cp packaging/butler packaging/butler.service packaging/butler.sudoers release/
+          cp packaging/butler release/
           java -jar release/butler.jar generate-completion > release/butler_completion.sh
           (cd release && sha256sum * > SHA256SUMS)
 
@@ -48,7 +48,5 @@ jobs:
           files: |
             release/butler.jar
             release/butler
-            release/butler.service
-            release/butler.sudoers
             release/butler_completion.sh
             release/SHA256SUMS

@@ -50,7 +50,7 @@ class FileTriggerTest {
                                                    OnStartup onStartup) {
         return new AppearedTrigger.Config(dir,
                 Pattern.compile("api-(?<version>\\d+\\.\\d+\\.\\d+)\\.jar"),
-                settle, orderBy, onStartup);
+                settle, orderBy, onStartup, null);
     }
 
     private void artifact(String name, String content) throws IOException {
@@ -229,7 +229,7 @@ class FileTriggerTest {
         void aMissingDirFailsTheStart() throws Exception {
             AppearedTrigger.Config config =
                     new AppearedTrigger.Config(null, null, Duration.ofMillis(50), null,
-                            OnStartup.ALL);
+                            OnStartup.ALL, null);
 
             var e = assertThrows(IllegalArgumentException.class,
                     () -> new AppearedTrigger().start(config, fired::add, CTX));
@@ -267,6 +267,27 @@ class FileTriggerTest {
             assertEquals(List.of(), new AppearedTrigger().current(
                     watching(dir, Duration.ofSeconds(30), null, OnStartup.LATEST), CTX));
         }
+
+        @Test
+        @DisplayName("poll_interval: on the trigger itself overrides a slow daemon default")
+        void pollIntervalOverridesTheDefault() throws Exception {
+            TriggerContext slow = new Triggering("test", Duration.ofSeconds(10), false);
+            AppearedTrigger.Config config = new AppearedTrigger.Config(dir,
+                    Pattern.compile("api-(?<version>\\d+\\.\\d+\\.\\d+)\\.jar"),
+                    Duration.ofMillis(20), null, OnStartup.ALL, Duration.ofMillis(30));
+
+            Watcher watcher = new AppearedTrigger().start(config, fired::add, slow);
+            try {
+                // The first scan runs immediately, so the file has to arrive after it for the
+                // next firing to actually depend on the poll interval rather than the first look.
+                Thread.sleep(100);
+                artifact("api-1.2.4.jar", "jar");
+                eventually("the artifact to fire despite a 10s daemon default",
+                        () -> !fired.isEmpty());
+            } finally {
+                watcher.stop();
+            }
+        }
     }
 
     @Nested
@@ -284,7 +305,7 @@ class FileTriggerTest {
             Files.writeString(file, "a: 1");
 
             Watcher watcher = watch(new ChangedTrigger.Config(file, Duration.ofMillis(50),
-                    OnStartup.LATEST));
+                    OnStartup.LATEST, null));
             try {
                 eventually("the first reading", () -> !fired.isEmpty());
                 assertNotNull(fired.getFirst().facts().get("sha256"));
@@ -303,7 +324,7 @@ class FileTriggerTest {
         @DisplayName("no path: fails the start, as file.appeared does without a dir")
         void aMissingPathFailsTheStart() {
             ChangedTrigger.Config config =
-                    new ChangedTrigger.Config(null, Duration.ofMillis(50), OnStartup.LATEST);
+                    new ChangedTrigger.Config(null, Duration.ofMillis(50), OnStartup.LATEST, null);
 
             var e = assertThrows(IllegalArgumentException.class,
                     () -> new ChangedTrigger().start(config, fired::add, CTX));
@@ -318,11 +339,29 @@ class FileTriggerTest {
             Files.writeString(file, "a: 1");
 
             Watcher watcher = watch(new ChangedTrigger.Config(file, Duration.ofMillis(50),
-                    OnStartup.NONE));
+                    OnStartup.NONE, null));
             try {
                 never(() -> !fired.isEmpty());
                 Files.writeString(file, "a: 2");
                 eventually("the change to fire", () -> !fired.isEmpty());
+            } finally {
+                watcher.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("poll_interval: on the trigger itself overrides a slow daemon default")
+        void pollIntervalOverridesTheDefault() throws Exception {
+            Path file = dir.resolve("config.yaml");
+            Files.writeString(file, "a: 1");
+            TriggerContext slow = new Triggering("test", Duration.ofSeconds(10), false);
+            ChangedTrigger.Config config = new ChangedTrigger.Config(file, Duration.ofMillis(20),
+                    OnStartup.LATEST, Duration.ofMillis(30));
+
+            Watcher watcher = new ChangedTrigger().start(config, fired::add, slow);
+            try {
+                eventually("the first reading despite a 10s daemon default",
+                        () -> !fired.isEmpty());
             } finally {
                 watcher.stop();
             }

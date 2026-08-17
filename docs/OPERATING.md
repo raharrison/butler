@@ -4,7 +4,7 @@ Running the daemon on a server: install, the unit file, privileges, logs, what i
 what to do when something is wrong.
 
 The [README](../README.md) is the guide to writing a config;
-[configuration.md](configuration.md) is the reference for every key.
+[CONFIGURATION.md](CONFIGURATION.md) is the reference for every key.
 
 **Contents:** [Install](#install) · [The systemd unit](#the-systemd-unit) ·
 [Privileges](#privileges) · [Logging](#logging) · [The state directory](#the-state-directory) ·
