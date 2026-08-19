@@ -86,4 +86,22 @@ class DurationsTest {
     void formatRoundTripsThroughParse(String text) {
         assertEquals(text, Durations.format(Durations.parse(text)));
     }
+
+    @ParameterizedTest
+    @CsvSource({
+            "PT0S,          0s",
+            "PT0.4S,        0s",
+            "PT1.6S,        2s",
+            "PT47.231S,     47s",
+            "PT1M30S,       1m 30s",
+            "PT20M47.231S,  20m 47s",
+            "PT1H1S,        1h 1s",
+            "PT2H,          2h",
+            "PT72H,         3d",
+            "PT51H4M5S,     2d 3h 4m 5s",
+    })
+    @DisplayName("human renders whole seconds, largest unit first, zero units omitted")
+    void human(String iso, String expected) {
+        assertEquals(expected, Durations.human(Duration.parse(iso)));
+    }
 }

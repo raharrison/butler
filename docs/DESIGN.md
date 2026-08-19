@@ -105,18 +105,22 @@ Three rules make that unambiguous:
 
 Everything a condition or `${}` can see:
 
-| Namespace        | Contents                                                                                                                       |
-|------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| `vars.*`         | global `vars:` merged with job `vars:`, then any `set` steps                                                                   |
-| `trigger.*`      | facts from the event, including regex named capture groups                                                                     |
-| `steps.<name>.*` | results of steps that declared `register:`                                                                                     |
-| `state.*`        | values persisted by previous successful runs, overlaid with anything the job's `discover:` block observed on this run (§6.2)   |
-| `env.*`          | process environment                                                                                                            |
-| `secret.*`       | resolved secrets, from env or a secrets file. Not redacted in v1 (§11)                                                         |
-| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; and in hooks and `notify:`, also `status`, `duration`, `failed_step`, `error` |
-| `butler.*`       | `version`, `host`                                                                                                              |
+| Namespace        | Contents                                                                                                                                      |
+|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| `vars.*`         | global `vars:` merged with job `vars:`, then any `set` steps                                                                                  |
+| `trigger.*`      | facts from the event, including regex named capture groups                                                                                    |
+| `steps.<name>.*` | results of steps that declared `register:`                                                                                                    |
+| `state.*`        | values persisted by previous successful runs, overlaid with anything the job's `discover:` block observed on this run (§6.2)                  |
+| `env.*`          | process environment                                                                                                                           |
+| `secret.*`       | resolved secrets, from env or a secrets file. Not redacted in v1 (§11)                                                                        |
+| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; and in hooks and `notify:`, also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
+| `butler.*`       | `version`, `host`                                                                                                                             |
 
 Later namespaces never shadow earlier ones; the names are distinct on purpose.
+
+`run.duration` is elapsed time written for a person to read (`20m 47s`), rounded to whole seconds,
+so it is a string rather than a duration. `run.duration_ms` is the exact figure as a number, and is
+what a condition compares: `run.duration_ms > 300000`.
 
 ---
 
@@ -926,7 +930,8 @@ net.ryanh.butler
     Functions               the built-in function set
 
   util/
-    Durations               the one duration syntax, shared by config and the expr lexer
+    Durations               the one duration syntax, shared by config and the expr lexer,
+                            plus human() for elapsed time a person reads rather than reparses
     Semver                  the one version order, shared by the expr function and fs.list/prune
     Cron                    the one cron syntax, shared by schedule.cron and its parameter binding
     Literals                a resolved value rendered the way it would be written

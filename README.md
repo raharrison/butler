@@ -329,16 +329,16 @@ build you are running. Full parameter tables, defaults and outputs are in
 Conditions (`when:`, `until:`, `that:`) take a bare expression. Every other value is text with
 `${expr}` holes.
 
-| Namespace        | Holds                                                                                                       |
-|------------------|-------------------------------------------------------------------------------------------------------------|
-| `vars.*`         | global `vars:` merged with job `vars:`, then any `control.set` step                                         |
-| `trigger.*`      | facts from the event, including regex capture groups                                                        |
-| `steps.<name>.*` | results of steps that declared `register:`                                                                  |
-| `state.*`        | persisted values, overlaid with what `discover:` observed                                                   |
-| `env.*`          | process environment                                                                                         |
-| `secret.*`       | resolved secrets                                                                                            |
-| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; in hooks also `status`, `duration`, `failed_step`, `error` |
-| `butler.*`       | `version`, `host`                                                                                           |
+| Namespace        | Holds                                                                                                                      |
+|------------------|----------------------------------------------------------------------------------------------------------------------------|
+| `vars.*`         | global `vars:` merged with job `vars:`, then any `control.set` step                                                        |
+| `trigger.*`      | facts from the event, including regex capture groups                                                                       |
+| `steps.<name>.*` | results of steps that declared `register:`                                                                                 |
+| `state.*`        | persisted values, overlaid with what `discover:` observed                                                                  |
+| `env.*`          | process environment                                                                                                        |
+| `secret.*`       | resolved secrets                                                                                                           |
+| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; in hooks also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
+| `butler.*`       | `version`, `host`                                                                                                          |
 
 Operators: `and`, `or`, `not`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `matches`, `contains`.
 

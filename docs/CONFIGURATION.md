@@ -215,8 +215,13 @@ notify:
   failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}"
 ```
 
-Messages see `run.status`, `run.duration`, `run.failed_step` and `run.error` as well as the usual
-namespaces. An outcome with no message template sends nothing.
+Messages see `run.status`, `run.duration`, `run.duration_ms`, `run.failed_step` and `run.error` as
+well as the usual namespaces. An outcome with no message template sends nothing.
+
+`run.duration` is elapsed time for a person to read, rounded to whole seconds with zero units
+omitted: `47s`, `20m 47s`, `1h 1s`. `run.duration_ms` is the exact figure as a number, for a
+message that wants millisecond precision or a condition that wants to compare
+(`run.duration_ms > 300000`).
 
 ---
 
@@ -836,16 +841,16 @@ becoming `"5"`.
 
 **Namespaces**, and nothing else:
 
-|                  |                                                                                                                           |
-|------------------|---------------------------------------------------------------------------------------------------------------------------|
-| `vars.*`         | global `vars:` merged with job `vars:`, then any `control.set` step                                                       |
-| `trigger.*`      | facts from the event, including regex capture groups                                                                      |
-| `steps.<name>.*` | results of steps that declared `register:`                                                                                |
-| `state.*`        | persisted values, overlaid with what `discover:` observed                                                                 |
-| `env.*`          | process environment                                                                                                       |
-| `secret.*`       | resolved secrets                                                                                                          |
-| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; in hooks and `notify:` also `status`, `duration`, `failed_step`, `error` |
-| `butler.*`       | `version`, `host`                                                                                                         |
+|                  |                                                                                                                                          |
+|------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| `vars.*`         | global `vars:` merged with job `vars:`, then any `control.set` step                                                                      |
+| `trigger.*`      | facts from the event, including regex capture groups                                                                                     |
+| `steps.<name>.*` | results of steps that declared `register:`                                                                                               |
+| `state.*`        | persisted values, overlaid with what `discover:` observed                                                                                |
+| `env.*`          | process environment                                                                                                                      |
+| `secret.*`       | resolved secrets                                                                                                                         |
+| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; in hooks and `notify:` also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
+| `butler.*`       | `version`, `host`                                                                                                                        |
 
 An unknown *path* evaluates to `null`; an unknown *namespace* is a validation error, so
 `${triger.version}` is caught at load time while `default(state.deployed_version, "0.0.0")` still

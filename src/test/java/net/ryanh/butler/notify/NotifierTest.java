@@ -5,6 +5,7 @@ import net.ryanh.butler.runtime.*;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.testing.Fixture;
 import net.ryanh.butler.testing.StubServer;
+import net.ryanh.butler.util.Durations;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -55,6 +56,32 @@ class NotifierTest {
             assertEquals("api 1.2.4 deployed", run.notification().message());
             assertEquals("{\"text\": \"api 1.2.4 deployed\"}",
                     server.received().getFirst().body());
+        }
+    }
+
+    @Test
+    @DisplayName("a message reads run.duration as elapsed time, run.duration_ms exactly")
+    void theDurationAMessageSees() {
+        try (StubServer server = StubServer.serving(200, "ok")) {
+            Run run = run("""
+                    notifiers:
+                      ops:
+                        uses: notify.webhook
+                        url: %s
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: go}]
+                        notify:
+                          to: ops
+                          on: [success]
+                          success: "deployed in ${run.duration} (${run.duration_ms}ms)"
+                    """.formatted(server.url("/hook")));
+
+            String message = run.notification().message();
+            assertTrue(message.matches("deployed in \\d+s \\(\\d+ms\\)"), message);
+            assertEquals("deployed in " + Durations.human(run.duration())
+                    + " (" + run.duration().toMillis() + "ms)", message);
         }
     }
 

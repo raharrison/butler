@@ -15,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -99,8 +100,32 @@ class ContextTest {
     void runValuesArePlaceholders() {
         Context ctx = context(JOB, Map.of());
         assertEquals("<duration>", ctx.resolve("${run.duration}"));
+        assertEquals("<duration_ms>", ctx.resolve("${run.duration_ms}"));
         assertEquals("j", ctx.resolve("${run.job}"));
         assertTrue(ctx.dryRun());
+    }
+
+    @Test
+    @DisplayName("run.duration reads as elapsed time, run.duration_ms is the exact figure")
+    void outcomeDuration() {
+        Context ctx = context(JOB, Map.of());
+        ctx.outcome("ok", Duration.ofMillis(1_247_231), null, null);
+
+        assertEquals("20m 47s", ctx.resolve("${run.duration}"));
+        assertEquals("1247231", ctx.resolve("${run.duration_ms}"));
+        assertTrue(ctx.evaluate("run.duration_ms > 300000"));
+    }
+
+    @Test
+    @DisplayName("a part-second rounds rather than truncates")
+    void outcomeDurationRounds() {
+        Context ctx = context(JOB, Map.of());
+        ctx.outcome("ok", Duration.ofMillis(1600), null, null);
+        assertEquals("2s", ctx.resolve("${run.duration}"));
+
+        ctx.outcome("ok", Duration.ofMillis(400), null, null);
+        assertEquals("0s", ctx.resolve("${run.duration}"));
+        assertEquals("400", ctx.resolve("${run.duration_ms}"));
     }
 
     @Test

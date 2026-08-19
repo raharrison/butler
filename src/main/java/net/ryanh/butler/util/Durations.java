@@ -83,6 +83,25 @@ public final class Durations {
     }
 
     /**
+     * Renders an elapsed time for a person to read: whole seconds, largest unit first, zero units
+     * omitted, e.g. {@code 47s}, {@code 20m 47s}, {@code 1h 1s}
+     */
+    public static String human(Duration d) {
+        long total = Math.round(d.toMillis() / 1000.0);
+        if (total == 0) return "0s";
+        long[] amounts = {total / 86_400, total % 86_400 / 3_600, total % 3_600 / 60, total % 60};
+        String[] units = {"d", "h", "m", "s"};
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < units.length; i++) {
+            if (amounts[i] != 0) {
+                if (!sb.isEmpty()) sb.append(' ');
+                sb.append(amounts[i]).append(units[i]);
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
      * Renders a duration back to the config syntax, choosing the largest exact unit.
      */
     public static String format(Duration d) {

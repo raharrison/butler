@@ -5,6 +5,7 @@ import net.ryanh.butler.expr.Evaluator;
 import net.ryanh.butler.expr.Expressions;
 import net.ryanh.butler.expr.Scope;
 import net.ryanh.butler.spi.*;
+import net.ryanh.butler.util.Durations;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -81,6 +82,7 @@ public final class Context implements RunContext {
         ctx.run.put("dry_run", true);
         ctx.run.put("status", "<status>");
         ctx.run.put("duration", "<duration>");
+        ctx.run.put("duration_ms", "<duration_ms>");
         ctx.run.put("failed_step", "<failed_step>");
         ctx.run.put("error", "<error>");
         return ctx;
@@ -271,7 +273,8 @@ public final class Context implements RunContext {
      */
     public void outcome(String status, Duration duration, String failedStep, String error) {
         run.put("status", status);
-        run.put("duration", duration == null ? null : duration);
+        run.put("duration", duration == null ? null : Durations.human(duration));
+        run.put("duration_ms", duration == null ? null : duration.toMillis());
         run.put("failed_step", failedStep);
         run.put("error", error);
     }
