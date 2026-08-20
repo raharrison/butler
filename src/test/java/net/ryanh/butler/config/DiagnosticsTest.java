@@ -15,7 +15,13 @@ import static org.junit.jupiter.api.Assertions.*;
 class DiagnosticsTest {
 
     private static Diagnostic only(String yaml) {
-        var diags = loadAndValidate(yaml).diagnostics();
+        return only(loadAndValidate(yaml).diagnostics());
+    }
+
+    /**
+     * Asserts exactly one diagnostic and returns it.
+     */
+    static Diagnostic only(Diagnostics diags) {
         List<Diagnostic> all = diags.all();
         assertEquals(1, all.size(),
                 "expected exactly one diagnostic but got:\n" + diags.render("test.yaml"));
@@ -225,6 +231,23 @@ class DiagnosticsTest {
                         steps: [{uses: control.log}]
                     """);
             assertAt(d, 2, "not a usable path");
+        }
+
+        @Test
+        @DisplayName("and in a list, at the entry that is wrong")
+        void anUnusablePathInAListPointsAtTheEntry() {
+            var d = only("""
+                    secrets:
+                      file:
+                        - /etc/butler/secrets.yaml
+                        - "\\0"
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            assertAt(d, 4, "not a usable path");
+            assertEquals("/secrets/file/1", d.path());
         }
 
         @Test

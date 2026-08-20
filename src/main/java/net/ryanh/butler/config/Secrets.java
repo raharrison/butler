@@ -11,7 +11,7 @@ import java.nio.file.Path;
 import java.util.*;
 
 /**
- * The {@code secret.*} namespace: a secrets file, the process environment, or both.
+ * The {@code secret.*} namespace: secrets files, the process environment, or both.
  *
  * <p>A map rather than a lookup method because that is what the expression evaluator walks, and
  * environment-backed secrets cannot be enumerated - only asked for by name - so {@link #get} does
@@ -35,26 +35,44 @@ public final class Secrets extends AbstractMap<String, Object> {
     }
 
     /**
-     * Reads the configured secrets file, if there is one and it is there. A file named but absent
-     * is not an error: configs are routinely validated somewhere other than the host they run on.
+     * Reads the configured files in order and merges them. A file named but absent is not an
+     * error: configs are routinely validated somewhere other than the host they run on. A name
+     * defined in two of them is.
      */
     public static Secrets load(ButlerConfig.SecretsConfig config, Diagnostics diags) {
         if (config == null) {
             return none();
         }
         Map<String, Object> values = new LinkedHashMap<>();
-        Path file = config.file();
-        if (file != null && Files.isReadable(file)) {
+        Map<String, Path> definedIn = new HashMap<>();
+        YAMLMapper mapper = YAMLMapper.builder().build();
+        List<Path> files = config.files();
+        for (int i = 0; i < files.size(); i++) {
+            Path file = files.get(i);
+            if (!Files.isReadable(file)) {
+                continue;
+            }
+            // With one file there is no index in the source to point at.
+            String at = files.size() == 1 ? "/secrets/file" : "/secrets/file/" + i;
             try {
-                Map<String, Object> read = YAMLMapper.builder().build()
-                        .readValue(Files.readString(file),
-                                new TypeReference<LinkedHashMap<String, Object>>() {
-                                });
-                if (read != null) {
-                    values.putAll(read);
+                Map<String, Object> read = mapper.readValue(Files.readString(file),
+                        new TypeReference<LinkedHashMap<String, Object>>() {
+                        });
+                if (read == null) {
+                    continue;
                 }
+                read.forEach((key, value) -> {
+                    Path previous = definedIn.get(key);
+                    if (previous != null) {
+                        diags.error(at, "secret \"" + key + "\" is already defined in "
+                                + Literals.path(previous));
+                        return;
+                    }
+                    definedIn.put(key, file);
+                    values.put(key, value);
+                });
             } catch (IOException | RuntimeException e) {
-                diags.error("/secrets/file", "could not read secrets from " + Literals.path(file)
+                diags.error(at, "could not read secrets from " + Literals.path(file)
                         + ": " + firstLine(e));
             }
         }

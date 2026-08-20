@@ -160,7 +160,7 @@ butler                          # the daemon
 ## The CLI
 
 ```
-butler [--config <file>] [--dry-run]     # no subcommand: run as the daemon
+butler [--config <file>...] [--dry-run]  # no subcommand: run as the daemon
 butler validate                          # exit 1 listing every error, for CI
 butler check                             # validate, then print the effective config
 butler trigger <job> [--set k=v]         # run one job once, or rehearse it with --dry-run
@@ -188,10 +188,15 @@ butler trigger api --dry-run | less         # read the plan for the newest artif
 butler trigger api --set version=1.2.4      # run against a fact you supply
 butler adopt                                # seed state for every job, run nothing
 butler validate -c ./butler.yaml            # any command takes --config
+butler validate -c base.yaml -c api.yaml    # several files, read as one config
 ```
 
 `--config` defaults to `/etc/butler/butler.yaml` and is on every command, so they all read the same
 config the daemon will. Exit codes are `0` ok, `1` failure or validation errors, `2` bad usage.
+
+**Repeat `--config` to spread one config over several files.** They are read in order and merged:
+`jobs:`, `notifiers:` and `vars:` accumulate and a name may only be defined once, while `settings:`
+and `secrets:` belong in a single file. See [Several files](docs/CONFIGURATION.md#several-files).
 
 Logs go to stderr; stdout carries whatever you asked for, so `butler trigger api --dry-run | less`
 shows the plan and nothing else.

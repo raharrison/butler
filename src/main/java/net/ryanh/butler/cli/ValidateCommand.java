@@ -23,14 +23,13 @@ public final class ValidateCommand implements Callable<Integer> {
     public Integer call() {
         var result = configOptions.loadAndValidate();
         var diags = result.diagnostics();
-        String file = configOptions.config().toString();
 
         if (diags.isEmpty()) {
-            System.out.println(file + ": ok");
+            configOptions.configs().forEach(file -> System.out.println(file + ": ok"));
             return ButlerCommand.EXIT_OK;
         }
 
-        System.err.print(diags.render(file));
+        System.err.print(diags.render(configOptions.describe()));
         return diags.hasErrors() ? ButlerCommand.EXIT_FAILURE : ButlerCommand.EXIT_OK;
     }
 }

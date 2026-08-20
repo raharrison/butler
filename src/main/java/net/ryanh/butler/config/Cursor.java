@@ -123,6 +123,25 @@ public final class Cursor {
         }
     }
 
+    /**
+     * One path, or a list of them.
+     */
+    public List<Path> paths(String key) {
+        boolean list = map.get(key) instanceof List;
+        List<String> values = strings(key);
+        List<Path> out = new ArrayList<>(values.size());
+        for (int i = 0; i < values.size(); i++) {
+            String text = values.get(i);
+            try {
+                out.add(Path.of(text));
+            } catch (InvalidPathException e) {
+                diags.error(list ? child(key) + "/" + i : child(key),
+                        "not a usable path: \"" + text + "\" (" + e.getReason() + ")");
+            }
+        }
+        return List.copyOf(out);
+    }
+
     public Duration duration(String key, Duration fallback) {
         Object v = raw(key);
         if (v == null) {

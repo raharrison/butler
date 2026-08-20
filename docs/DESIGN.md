@@ -112,7 +112,7 @@ Everything a condition or `${}` can see:
 | `steps.<name>.*` | results of steps that declared `register:`                                                                                                    |
 | `state.*`        | values persisted by previous successful runs, overlaid with anything the job's `discover:` block observed on this run (§6.2)                  |
 | `env.*`          | process environment                                                                                                                           |
-| `secret.*`       | resolved secrets, from env or a secrets file. Not redacted in v1 (§11)                                                                        |
+| `secret.*`       | resolved secrets, from env or secrets files. Not redacted in v1 (§11)                                                                         |
 | `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; and in hooks and `notify:`, also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
 | `butler.*`       | `version`, `host`                                                                                                                             |
 
@@ -342,6 +342,17 @@ which step type did it, and it is why `simulate()` (§7.1) hands back a whole re
 
 Where a step's own output shares a name with a common field, as `http.request`'s `status` does,
 the step's wins. `ok`, `failed` and `skipped` still say how the step itself went.
+
+### 3.6 One config, several files
+
+`--config` may be repeated. Each file is a whole document; they are read in order and merged
+before validation, so cross-references resolve however the files are split. `jobs:`, `notifiers:`
+and `vars:` accumulate and a name may be defined only once, while `settings:` and `secrets:`
+configure the daemon and so belong to a single file.
+
+Later files add rather than override: overriding would need a precedence order in the reader's
+head, and the point is one job to a file, not environment layering. There is still one config,
+one state directory and one run history; only the diagnostics know how many files there were.
 
 ---
 
@@ -1028,7 +1039,7 @@ Built with **picocli**: one annotated class per command, a shared mixin for `--c
 `--dry-run`, generated help and `--version`, and a generated completion script for free.
 
 ```
-butler [--config /etc/butler/butler.yaml] [--dry-run]     # no subcommand: run as daemon
+butler [--config /etc/butler/butler.yaml]... [--dry-run]  # no subcommand: run as daemon
 butler validate                     # exit 1 listing every error, for CI
 butler check                        # validate, then print the resolved effective config
 butler trigger <job> [--set version=1.2.3]
@@ -1042,7 +1053,7 @@ everything a human does interactively is a subcommand. In picocli that is a top-
 `@Command` that is itself `Runnable`, with the rest registered as `subcommands`.
 
 `--config` defaults to `/etc/butler/butler.yaml` and is on the shared mixin, so every command
-reads the same config the daemon will.
+reads the same config the daemon will. Repeating it reads several files as one config (§3.6).
 
 **`--dry-run` works on every command that would otherwise change something**, including the
 daemon: `butler --dry-run` starts all the watchers and reports what each firing would do,
@@ -1083,8 +1094,8 @@ is behind the SPI, so replacing it later touches one class.
 
 This is stated plainly in the docs: **`shell.run` executes with the daemon's privileges**, and
 so does anything a `discover:` block runs. A config file is as trusted as the daemon, so it
-lives at `0640 root:butler`, and secrets come from env or a separate secrets file rather than
-inline.
+lives at `0640 root:butler`, and secrets come from env or separate secrets files rather than
+inline. `secrets: file:` takes a list, merged the same way `--config` is (§3.6).
 
 ### 10.3 Observability
 

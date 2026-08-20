@@ -1,26 +1,42 @@
 package net.ryanh.butler.config;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 
 /**
  * Collects every problem in a config rather than stopping at the first.
  *
  * <p>A validator that throws on the first error makes fixing a config an iterative game of
  * whack-a-mole, so nothing here throws.
+ *
+ * <p>Each problem records the file it is in. The file being read answers lookups while it is
+ * being read; after {@link #merged}, a path is looked up across every file.
  */
 public final class Diagnostics {
 
     private final List<Diagnostic> items = new ArrayList<>();
-    private SourceMap sourceMap = SourceMap.empty();
+    private final Map<String, SourceMap> sources = new LinkedHashMap<>();
+    private String currentFile;
+    private SourceMap currentMap = SourceMap.empty();
+    private boolean merged;
 
-    public void sourceMap(SourceMap map) {
-        this.sourceMap = map;
+    /**
+     * Begins reading a file; null when the config came from a string.
+     */
+    public void source(String file, SourceMap map) {
+        sources.put(file, map);
+        currentFile = file;
+        currentMap = map;
+    }
+
+    /**
+     * No more files: paths are looked up across all of them from here.
+     */
+    public void merged() {
+        merged = true;
     }
 
     public void error(String path, String message) {
-        items.add(new Diagnostic(Diagnostic.Severity.ERROR, path, sourceMap.locate(path), message));
+        add(Diagnostic.Severity.ERROR, path, message);
     }
 
     /**
@@ -28,19 +44,56 @@ public final class Diagnostics {
      * caller: a document that will not parse has no paths to look up.
      */
     public void errorAt(Diagnostic.Loc loc, String message) {
-        items.add(new Diagnostic(Diagnostic.Severity.ERROR, "", loc, message));
+        items.add(new Diagnostic(Diagnostic.Severity.ERROR, currentFile, "", loc, message));
     }
 
     public void warn(String path, String message) {
-        items.add(new Diagnostic(Diagnostic.Severity.WARNING, path, sourceMap.locate(path), message));
+        add(Diagnostic.Severity.WARNING, path, message);
+    }
+
+    private void add(Diagnostic.Severity severity, String path, String message) {
+        if (!merged) {
+            items.add(new Diagnostic(severity, currentFile, path, currentMap.locate(path), message));
+            return;
+        }
+        // Longest known prefix wins. The root, which every file has, falls to the first.
+        String p = path == null ? "" : path;
+        while (true) {
+            for (Map.Entry<String, SourceMap> source : sources.entrySet()) {
+                Diagnostic.Loc loc = source.getValue().at(p);
+                if (loc != null) {
+                    items.add(new Diagnostic(severity, source.getKey(), path, loc, message));
+                    return;
+                }
+            }
+            if (p.isEmpty()) {
+                break;
+            }
+            int slash = p.lastIndexOf('/');
+            p = slash <= 0 ? "" : p.substring(0, slash);
+        }
+        String first = sources.isEmpty() ? null : sources.keySet().iterator().next();
+        items.add(new Diagnostic(severity, first, path, null, message));
     }
 
     public List<Diagnostic> all() {
         List<Diagnostic> sorted = new ArrayList<>(items);
         sorted.sort(Comparator
-                .comparingInt((Diagnostic d) -> d.loc() == null ? Integer.MAX_VALUE : d.loc().line())
+                .comparingInt((Diagnostic d) -> fileOrder(d.file()))
+                .thenComparingInt(d -> d.loc() == null ? Integer.MAX_VALUE : d.loc().line())
                 .thenComparingInt(d -> d.loc() == null ? 0 : d.loc().col()));
         return List.copyOf(sorted);
+    }
+
+    private int fileOrder(String file) {
+        int i = 0;
+        for (String known : sources.keySet()) {
+            if (known == null ? file == null : known.equals(file)) {
+                return i;
+            }
+            i++;
+        }
+        return Integer.MAX_VALUE;
     }
 
     public List<Diagnostic> errors() {
@@ -70,10 +123,10 @@ public final class Diagnostics {
         return items.isEmpty();
     }
 
-    public String render(String file) {
+    public String render(String fallback) {
         StringBuilder sb = new StringBuilder();
         for (Diagnostic d : all()) {
-            sb.append(d.render(file)).append('\n');
+            sb.append(d.render(fallback)).append('\n');
         }
         long errors = errors().size();
         long warnings = warnings().size();

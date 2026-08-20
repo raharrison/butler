@@ -32,7 +32,18 @@ class ConfigLoaderTest {
     }
 
     static ConfigLoader.Result loadAndValidate(String yaml) {
-        ConfigLoader.Result r = ConfigLoader.parse(yaml);
+        return validate(ConfigLoader.parse(yaml));
+    }
+
+    static ConfigLoader.Result loadAndValidate(ConfigLoader.Source... files) {
+        return validate(ConfigLoader.parse(List.of(files)));
+    }
+
+    static ConfigLoader.Source file(String name, String yaml) {
+        return new ConfigLoader.Source(name, yaml);
+    }
+
+    private static ConfigLoader.Result validate(ConfigLoader.Result r) {
         ConfigValidator.validate(r.config(), r.diagnostics(), Vocabulary.of(
                 StepRegistry.discover().vocabulary(), TriggerRegistry.discover().vocabulary()));
         return r;
@@ -207,6 +218,39 @@ class ConfigLoaderTest {
             assertEquals(Enums.LogFormat.JSON, s.logFormat());
             assertEquals(4, s.maxConcurrentRuns());
             assertTrue(r.config().secrets().fromEnv());
+            assertEquals(List.of(), r.config().secrets().files());
+        }
+
+        @Test
+        @DisplayName("secrets: file: takes one file or a list of them")
+        void secretsFileIsOneOrMany() {
+            var one = loadAndValidate("""
+                    secrets:
+                      file: /etc/butler/secrets.yaml
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            assertFalse(one.diagnostics().hasErrors(), one.diagnostics().render("x"));
+            assertEquals(List.of(Path.of("/etc/butler/secrets.yaml")),
+                    one.config().secrets().files());
+
+            var many = loadAndValidate("""
+                    secrets:
+                      file:
+                        - /etc/butler/secrets.yaml
+                        - /etc/butler/secrets.d/api.yaml
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            assertFalse(many.diagnostics().hasErrors(), many.diagnostics().render("x"));
+            assertEquals(List.of(Path.of("/etc/butler/secrets.yaml"),
+                            Path.of("/etc/butler/secrets.d/api.yaml")),
+                    many.config().secrets().files(),
+                    "read in the order they were listed");
         }
     }
 
@@ -252,6 +296,205 @@ class ConfigLoaderTest {
             String out = r.diagnostics().render("x");
             assertTrue(out.contains("needs a unit"), out);
             assertTrue(out.contains("30s"), out);
+        }
+    }
+
+    @Nested
+    @DisplayName("a config spread over several files")
+    class SeveralFiles {
+
+        private static final String BASE = """
+                version: 1
+                
+                settings:
+                  state_dir: /srv/butler
+                
+                vars:
+                  app: demo
+                
+                notifiers:
+                  ops:
+                    uses: notify.slack
+                    channel: "#deploys"
+                """;
+
+        @Test
+        @DisplayName("is one config: the files accumulate in the order they were given")
+        void filesAccumulate() {
+            var r = loadAndValidate(
+                    file("base.yaml", BASE),
+                    file("deploy.yaml", """
+                            jobs:
+                              deploy:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log, message: "deploying ${vars.app}"}]
+                                notify: {to: ops}
+                            """),
+                    file("backup.yaml", """
+                            jobs:
+                              backup:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log, message: backing up}]
+                            """));
+
+            assertEquals("", r.diagnostics().render("x"), "a split config should be as clean");
+            assertEquals(List.of("deploy", "backup"), List.copyOf(r.config().jobs().keySet()));
+            assertEquals(Path.of("/srv/butler"), r.config().settings().stateDir());
+            assertEquals(Set.of("ops"), r.config().notifiers().keySet());
+            assertEquals("demo", r.config().vars().get("app"));
+        }
+
+        @Test
+        @DisplayName("a job may use vars and notifiers another file defines")
+        void referencesCrossFiles() {
+            var r = loadAndValidate(
+                    file("base.yaml", BASE),
+                    file("jobs.yaml", """
+                            jobs:
+                              deploy:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log, message: "${vars.app}"}]
+                                notify: {to: ops}
+                            """));
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+        }
+
+        @Test
+        @DisplayName("a problem names the file it is in, not the first file")
+        void diagnosticsNameTheirOwnFile() {
+            var r = loadAndValidate(
+                    file("base.yaml", BASE),
+                    file("jobs.yaml", """
+                            jobs:
+                              deploy:
+                                on: [{uses: manual}]
+                                tiemout: 30s
+                                steps: [{uses: control.log}]
+                            """));
+            var d = DiagnosticsTest.only(r.diagnostics());
+            assertEquals("jobs.yaml", d.file());
+            assertEquals(4, d.loc().line());
+            assertTrue(d.message().contains("tiemout"), d.message());
+        }
+
+        @Test
+        @DisplayName("a duplicate job is reported against the file that repeated it")
+        void duplicateJob() {
+            var r = loadAndValidate(
+                    file("first.yaml", """
+                            jobs:
+                              deploy:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log, message: a}]
+                            """),
+                    file("second.yaml", """
+                            jobs:
+                              deploy:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log, message: b}]
+                            """));
+            var d = DiagnosticsTest.only(r.diagnostics());
+            assertEquals("second.yaml", d.file());
+            assertEquals("/jobs/deploy", d.path());
+            assertEquals(2, d.loc().line());
+            assertTrue(d.message().contains("already defined in first.yaml"), d.message());
+            assertEquals("a",
+                    r.config().jobs().get("deploy").steps().getFirst().params().get("message"),
+                    "the first definition is the one kept");
+        }
+
+        @Test
+        void duplicateVarAndNotifierAreReportedTheSameWay() {
+            var r = loadAndValidate(file("base.yaml", BASE), file("more.yaml", """
+                    vars:
+                      app: other
+                    
+                    notifiers:
+                      ops:
+                        uses: notify.slack
+                        channel: "#other"
+                    
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: hi}]
+                    """));
+            var messages = r.diagnostics().errors().stream().map(Diagnostic::message).toList();
+            assertEquals(2, messages.size(), r.diagnostics().render("x"));
+            assertTrue(messages.getFirst().contains("var \"app\" is already defined in base.yaml"),
+                    messages.toString());
+            assertTrue(messages.get(1).contains("notifier \"ops\" is already defined in base.yaml"),
+                    messages.toString());
+        }
+
+        @Test
+        @DisplayName("settings: configures the daemon, so it belongs to one file")
+        void settingsMayOnlyBeSetOnce() {
+            var r = loadAndValidate(file("base.yaml", BASE), file("more.yaml", """
+                    settings:
+                      state_dir: /var/tmp/other
+                    
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: hi}]
+                    """));
+            var d = DiagnosticsTest.only(r.diagnostics());
+            assertEquals("more.yaml", d.file());
+            assertEquals("/settings", d.path());
+            assertTrue(d.message().contains("already set in base.yaml"), d.message());
+        }
+
+        @Test
+        @DisplayName("settings: may live in any one of the files")
+        void settingsNeedNotBeInTheFirstFile() {
+            var r = loadAndValidate(
+                    file("jobs.yaml", """
+                            jobs:
+                              j:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log, message: hi}]
+                            """),
+                    file("settings.yaml", """
+                            settings:
+                              state_dir: /srv/butler
+                              max_concurrent_runs: 9
+                            """));
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertEquals(Path.of("/srv/butler"), r.config().settings().stateDir());
+            assertEquals(9, r.config().settings().maxConcurrentRuns());
+        }
+
+        @Test
+        @DisplayName("a file that will not parse does not stop the others being read")
+        void oneBadFileStillReportsTheRest() {
+            var r = loadAndValidate(
+                    file("broken.yaml", """
+                            jobs:
+                              j:
+                                 on: [{uses: manual}]
+                                  steps: [{uses: control.log}]
+                            """),
+                    file("good.yaml", """
+                            jobs:
+                              other:
+                                on: [{uses: manual}]
+                                tiemout: 30s
+                                steps: [{uses: control.log, message: hi}]
+                            """));
+            var files = r.diagnostics().errors().stream().map(Diagnostic::file).toList();
+            assertEquals(List.of("broken.yaml", "good.yaml"), files, r.diagnostics().render("x"));
+            assertNotNull(r.config().jobs().get("other"), "the readable file still loaded");
+        }
+
+        @Test
+        void noJobsInAnyFileIsReportedOnce() {
+            var r = loadAndValidate(file("base.yaml", BASE), file("more.yaml", """
+                    vars:
+                      other: 1
+                    """));
+            assertTrue(DiagnosticsTest.only(r.diagnostics()).message().contains("no jobs defined"),
+                    r.diagnostics().render("x"));
         }
     }
 }

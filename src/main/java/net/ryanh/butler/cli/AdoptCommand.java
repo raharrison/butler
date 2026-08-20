@@ -40,7 +40,7 @@ public final class AdoptCommand implements Callable<Integer> {
         var result = configOptions.loadAndValidate();
         var diags = result.diagnostics();
         if (!diags.isEmpty()) {
-            System.err.print(diags.render(configOptions.config().toString()));
+            System.err.print(diags.render(configOptions.describe()));
         }
         if (diags.hasErrors()) {
             return ButlerCommand.EXIT_FAILURE;

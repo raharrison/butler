@@ -36,10 +36,9 @@ public final class CheckCommand implements Callable<Integer> {
     public Integer call() {
         var result = configOptions.loadAndValidate();
         var diags = result.diagnostics();
-        String file = configOptions.config().toString();
 
         if (!diags.isEmpty()) {
-            System.err.print(diags.render(file));
+            System.err.print(diags.render(configOptions.describe()));
         }
         if (diags.hasErrors()) {
             return ButlerCommand.EXIT_FAILURE;
@@ -67,8 +66,8 @@ public final class CheckCommand implements Callable<Integer> {
 
         sb.append("secrets:\n");
         kv(sb, 1, "from_env", c.secrets().fromEnv());
-        if (c.secrets().file() != null) {
-            kv(sb, 1, "file", c.secrets().file());
+        if (!c.secrets().files().isEmpty()) {
+            kv(sb, 1, "file", c.secrets().files());
         }
 
         if (!c.vars().isEmpty()) {

@@ -41,10 +41,9 @@ public final class TriggerCommand implements Callable<Integer> {
     public Integer call() {
         var result = configOptions.loadAndValidate();
         var diags = result.diagnostics();
-        String file = configOptions.config().toString();
 
         if (!diags.isEmpty()) {
-            System.err.print(diags.render(file));
+            System.err.print(diags.render(configOptions.describe()));
         }
         if (diags.hasErrors()) {
             return ButlerCommand.EXIT_FAILURE;
@@ -72,7 +71,7 @@ public final class TriggerCommand implements Callable<Integer> {
 
         // Printed first: a plan with the bad step marked says more than the error alone.
         if (diags.hasErrors()) {
-            System.err.print(diags.render(file));
+            System.err.print(diags.render(configOptions.describe()));
             return ButlerCommand.EXIT_FAILURE;
         }
         return ButlerCommand.EXIT_OK;

@@ -1,8 +1,8 @@
 # Configuration reference
 
-Everything Butler does is driven by one YAML file, given to the daemon at startup. This page is the
-reference; [DESIGN.md](DESIGN.md) says why it is shaped this way, and the [README](../README.md) is
-the guide to getting one running.
+Everything Butler does is driven by YAML, given to the daemon at startup: one file, or
+[several](#several-files) read as one. This page is the reference; [DESIGN.md](DESIGN.md) says why
+it is shaped this way, and the [README](../README.md) is the guide to getting one running.
 
 `butler validate` checks every key on this page, and `butler steps` prints the step half of it
 straight from the registry, so it never falls behind the build you are running.
@@ -31,6 +31,28 @@ rather than its value, so `copy: *base` would silently mean the string `"base"`.
 
 A repeated key is an error rather than last-one-wins.
 
+### Several files
+
+`--config` may be given more than once. The files are read in order and merged into one config, so
+a job in the last file uses `vars:` from the first, and `notify: {to: ops}` finds a notifier
+wherever it was defined.
+
+```bash
+butler --config /etc/butler/butler.yaml \
+       --config /etc/butler/jobs/api.yaml \
+       --config /etc/butler/jobs/backup.yaml
+```
+
+| Key                         | Across files                                           |
+|-----------------------------|--------------------------------------------------------|
+| `jobs`, `notifiers`, `vars` | Accumulate. Defining a name twice is an error.         |
+| `settings`, `secrets`       | Belong to one file. Setting either in two is an error. |
+| `version`                   | Any file may carry it; each must say `1`.              |
+
+Later files add, never override. Validation judges the whole, so a file holding only `vars:` is
+fine and a set of files that between them define no jobs is not. Each problem names the file it is
+in, with that file's line and column.
+
 ### `settings`
 
 | Key                   | Default                  | Meaning                                                                        |
@@ -53,6 +75,18 @@ secrets:
 
 A named-but-absent file is not an error, since configs are routinely validated somewhere other than
 the host they run on. A file that exists and cannot be parsed is.
+
+`file:` also takes a list, read in order and merged:
+
+```yaml
+secrets:
+  file:
+    - /etc/butler/secrets.yaml
+    - /etc/butler/secrets.d/api.yaml
+```
+
+A name may be defined in only one of them: a duplicate is an error rather than one credential
+silently shadowing another.
 
 ### `vars`
 

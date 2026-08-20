@@ -2,6 +2,7 @@ package net.ryanh.butler.config.model;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -15,11 +16,6 @@ public record ButlerConfig(
         Map<String, NotifierDef> notifiers,
         Map<String, JobDef> jobs) {
 
-    /**
-     * @param shutdownGrace how long a shutdown lets runs already in flight finish before cancelling
-     *                      them. Generous by default: a deploy killed halfway is the worst outcome
-     *                      available, and a job's own {@code timeout:} already bounds it
-     */
     public record Settings(
             Path stateDir,
             Enums.LogFormat logFormat,
@@ -44,9 +40,12 @@ public record ButlerConfig(
     public record RunRetention(int count, Duration age) {
     }
 
-    public record SecretsConfig(boolean fromEnv, Path file) {
+    /**
+     * @param files read in order and merged; a name may be defined in only one of them
+     */
+    public record SecretsConfig(boolean fromEnv, List<Path> files) {
         public static SecretsConfig defaults() {
-            return new SecretsConfig(true, null);
+            return new SecretsConfig(true, List.of());
         }
     }
 }

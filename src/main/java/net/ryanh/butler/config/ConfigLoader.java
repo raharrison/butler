@@ -14,12 +14,16 @@ import java.time.Duration;
 import java.util.*;
 
 /**
- * Reads a config file into the model, collecting every problem rather than stopping at the first.
+ * Reads config files into the model, collecting every problem rather than stopping at the first.
  *
  * <p>The document is bound to a generic tree and walked with {@link Cursor} rather than bound
  * straight to records by databind. Databind throws on the first mismatch, which is the opposite
  * of what this needs; walking the tree keeps full control over unknown-key detection, paths and
  * error recovery.
+ *
+ * <p>A config may be split over several files, read in order and merged: {@code jobs:},
+ * {@code notifiers:} and {@code vars:} accumulate, while {@code settings:} and {@code secrets:}
+ * belong to a single file.
  */
 public final class ConfigLoader {
 
@@ -29,25 +33,59 @@ public final class ConfigLoader {
     /**
      * The outcome of loading: whatever could be built, plus everything wrong with it.
      */
-    public record Result(ButlerConfig config, Diagnostics diagnostics, String source) {
+    public record Result(ButlerConfig config, Diagnostics diagnostics) {
         public boolean ok() {
             return !diagnostics.hasErrors();
         }
     }
 
+    /**
+     * One config file: its text, and the name its problems are reported against.
+     */
+    public record Source(String file, String yaml) {
+    }
+
     public static Result load(Path file) throws IOException {
-        return parse(Files.readString(file));
+        return load(List.of(file));
+    }
+
+    public static Result load(List<Path> files) throws IOException {
+        List<Source> sources = new ArrayList<>(files.size());
+        for (Path file : files) {
+            sources.add(new Source(file.toString(), Files.readString(file)));
+        }
+        return parse(sources);
     }
 
     public static Result parse(String yaml) {
+        return parse(List.of(new Source(null, yaml)));
+    }
+
+    public static Result parse(List<Source> sources) {
         Diagnostics diags = new Diagnostics();
-        SourceMap sourceMap = SourceMap.of(yaml);
-        diags.sourceMap(sourceMap);
+        Merge merge = new Merge(diags);
+        for (Source source : sources) {
+            SourceMap sourceMap = SourceMap.of(source.yaml());
+            diags.source(source.file(), sourceMap);
+            read(source, sourceMap, diags, merge);
+        }
+        // Validation runs on the merged document, not on any one file.
+        diags.merged();
+        return new Result(merge.build(), diags);
+    }
+
+    /**
+     * Reads one file into the merge. An unreadable one contributes nothing and does not stop
+     * the rest.
+     */
+    private static void read(Source source, SourceMap sourceMap, Diagnostics diags, Merge merge) {
+        String yaml = source.yaml();
         rejectAliases(sourceMap, diags);
 
         if (isEffectivelyEmpty(yaml)) {
             diags.error("", "the config file is empty");
-            return new Result(null, diags, yaml);
+            merge.unreadable();
+            return;
         }
 
         Map<String, Object> root;
@@ -62,16 +100,16 @@ public final class ConfigLoader {
             });
         } catch (RuntimeException e) {
             reportParseFailure(e, diags);
-            return new Result(null, diags, yaml);
+            merge.unreadable();
+            return;
         }
         if (root == null) {
             diags.error("", "the config file is empty");
-            return new Result(null, diags, yaml);
+            merge.unreadable();
+            return;
         }
 
-        Cursor c = new Cursor(root, "", diags);
-        ButlerConfig config = document(c);
-        return new Result(config, diags, yaml);
+        merge.add(document(new Cursor(root, "", diags)), source.file());
     }
 
     /**
@@ -146,13 +184,28 @@ public final class ConfigLoader {
 
     // ------------------------------------------------------------------ document
 
-    private static ButlerConfig document(Cursor c) {
+    /**
+     * One file's contribution. {@code settings} and {@code secrets} are null unless the file
+     * declared them.
+     */
+    private record Part(int version,
+                        ButlerConfig.Settings settings,
+                        ButlerConfig.SecretsConfig secrets,
+                        Map<String, Object> vars,
+                        Map<String, NotifierDef> notifiers,
+                        Map<String, JobDef> jobs) {
+    }
+
+    private static Part document(Cursor c) {
         int version = c.integer("version", 1);
         if (version != 1) {
             c.diagnostics().error("/version",
                     "unsupported config version " + version + " (this build understands version 1)");
         }
 
+        // Asked for even when absent: asked-for keys are the "did you mean" candidates.
+        boolean hasSettings = c.has("settings");
+        boolean hasSecrets = c.has("secrets");
         ButlerConfig.Settings settings = settings(c.object("settings"));
         ButlerConfig.SecretsConfig secrets = secrets(c.object("secrets"));
         Map<String, Object> vars = c.anyMap("vars");
@@ -163,13 +216,101 @@ public final class ConfigLoader {
         Map<String, JobDef> jobs = new LinkedHashMap<>();
         c.namedObjects("jobs").forEach((name, jc) -> jobs.put(name, job(name, jc)));
 
-        if (jobs.isEmpty() && !c.diagnostics().hasErrorAt("/jobs")) {
-            c.diagnostics().error("", "no jobs defined: a config needs at least one job");
+        c.rejectUnknownKeys();
+        return new Part(version, hasSettings ? settings : null, hasSecrets ? secrets : null,
+                vars, notifiers, jobs);
+    }
+
+    /**
+     * Accumulates the files into one config. A file is still the current source while it is
+     * added, so a duplicate is reported against the file that repeated it.
+     */
+    private static final class Merge {
+
+        private final Diagnostics diags;
+        private final Map<String, Object> vars = new LinkedHashMap<>();
+        private final Map<String, NotifierDef> notifiers = new LinkedHashMap<>();
+        private final Map<String, JobDef> jobs = new LinkedHashMap<>();
+        private final Map<String, String> definedIn = new HashMap<>();
+        private int version = 1;
+        private ButlerConfig.Settings settings;
+        private String settingsFile;
+        private ButlerConfig.SecretsConfig secrets;
+        private String secretsFile;
+        private boolean any;
+        private boolean unreadable;
+
+        Merge(Diagnostics diags) {
+            this.diags = diags;
         }
 
-        c.rejectUnknownKeys();
-        return new ButlerConfig(version, settings, secrets, vars,
-                Collections.unmodifiableMap(notifiers), Collections.unmodifiableMap(jobs));
+        void unreadable() {
+            unreadable = true;
+        }
+
+        void add(Part part, String file) {
+            if (!any) {
+                version = part.version();
+            }
+            any = true;
+            if (part.settings() != null) {
+                if (settings == null) {
+                    settings = part.settings();
+                    settingsFile = file;
+                } else {
+                    alreadySet("settings", settingsFile);
+                }
+            }
+            if (part.secrets() != null) {
+                if (secrets == null) {
+                    secrets = part.secrets();
+                    secretsFile = file;
+                } else {
+                    alreadySet("secrets", secretsFile);
+                }
+            }
+            part.vars().forEach((key, value) -> put(vars, "var", "/vars/" + key, key, value, file));
+            part.notifiers().forEach((key, value) ->
+                    put(notifiers, "notifier", "/notifiers/" + key, key, value, file));
+            part.jobs().forEach((key, value) ->
+                    put(jobs, "job", "/jobs/" + key, key, value, file));
+        }
+
+        private void alreadySet(String key, String first) {
+            diags.error("/" + key, key + ": is already set in " + name(first)
+                    + "; it configures the whole daemon, so it belongs in one file");
+        }
+
+        private <T> void put(Map<String, T> into, String kind, String path,
+                             String key, T value, String file) {
+            String previous = definedIn.get(path);
+            if (previous != null) {
+                diags.error(path, kind + " \"" + key + "\" is already defined in " + name(previous));
+                return;
+            }
+            definedIn.put(path, file);
+            into.put(key, value);
+        }
+
+        private static String name(String file) {
+            return file == null ? "this config" : file;
+        }
+
+        ButlerConfig build() {
+            if (!any) {
+                return null;
+            }
+            // An unreadable file may have held them.
+            if (jobs.isEmpty() && !unreadable && !diags.hasErrorAt("/jobs")) {
+                diags.error("", "no jobs defined: a config needs at least one job");
+            }
+            return new ButlerConfig(version,
+                    settings == null ? ButlerConfig.Settings.defaults() : settings,
+                    secrets == null ? ButlerConfig.SecretsConfig.defaults() : secrets,
+                    Collections.unmodifiableMap(vars),
+                    Collections.unmodifiableMap(notifiers),
+                    Collections.unmodifiableMap(jobs));
+        }
     }
 
     private static ButlerConfig.Settings settings(Cursor c) {
@@ -208,9 +349,9 @@ public final class ConfigLoader {
     private static ButlerConfig.SecretsConfig secrets(Cursor c) {
         ButlerConfig.SecretsConfig d = ButlerConfig.SecretsConfig.defaults();
         boolean fromEnv = c.bool("from_env", d.fromEnv());
-        Path file = c.path("file", null);
+        List<Path> files = c.paths("file");
         c.rejectUnknownKeys();
-        return new ButlerConfig.SecretsConfig(fromEnv, file);
+        return new ButlerConfig.SecretsConfig(fromEnv, files);
     }
 
     private static NotifierDef notifier(String name, Cursor c) {

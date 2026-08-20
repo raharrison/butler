@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -159,10 +160,44 @@ class ContextTest {
         Files.writeString(file, "SLACK_WEBHOOK: https://hooks.example/abc\n");
 
         Secrets secrets = Secrets.load(
-                new ButlerConfig.SecretsConfig(true, file), new Diagnostics());
+                new ButlerConfig.SecretsConfig(true, List.of(file)), new Diagnostics());
         assertEquals("https://hooks.example/abc", secrets.get("SLACK_WEBHOOK"));
         assertEquals(System.getenv("PATH"), secrets.get("PATH"));
         assertNull(secrets.get("NOTHING_IS_NAMED_THIS"));
+    }
+
+    @Test
+    @DisplayName("several secrets files are read in order and merged")
+    void secretsFilesMerge(@TempDir Path dir) throws IOException {
+        Path shared = dir.resolve("shared.yaml");
+        Files.writeString(shared, "SLACK_WEBHOOK: https://hooks.example/abc\n");
+        Path api = dir.resolve("api.yaml");
+        Files.writeString(api, "API_TOKEN: t-123\n");
+
+        Diagnostics diags = new Diagnostics();
+        Secrets secrets = Secrets.load(
+                new ButlerConfig.SecretsConfig(false, List.of(shared, api)), diags);
+        assertTrue(diags.isEmpty(), diags.render("x"));
+        assertEquals("https://hooks.example/abc", secrets.get("SLACK_WEBHOOK"));
+        assertEquals("t-123", secrets.get("API_TOKEN"));
+    }
+
+    @Test
+    @DisplayName("a secret defined in two files is an error, not a silent shadowing")
+    void duplicateSecretIsReported(@TempDir Path dir) throws IOException {
+        Path first = dir.resolve("first.yaml");
+        Files.writeString(first, "API_TOKEN: original\n");
+        Path second = dir.resolve("second.yaml");
+        Files.writeString(second, "API_TOKEN: replacement\n");
+
+        Diagnostics diags = new Diagnostics();
+        Secrets secrets = Secrets.load(
+                new ButlerConfig.SecretsConfig(false, List.of(first, second)), diags);
+        assertEquals(1, diags.errors().size(), diags.render("x"));
+        String message = diags.errors().getFirst().message();
+        assertTrue(message.contains("API_TOKEN"), message);
+        assertTrue(message.contains("first.yaml"), message);
+        assertEquals("original", secrets.get("API_TOKEN"), "the first file is the one kept");
     }
 
     @Test
@@ -170,7 +205,7 @@ class ContextTest {
     void missingSecretsFileIsTolerated(@TempDir Path dir) {
         Diagnostics diags = new Diagnostics();
         Secrets secrets = Secrets.load(
-                new ButlerConfig.SecretsConfig(false, dir.resolve("nope.yaml")), diags);
+                new ButlerConfig.SecretsConfig(false, List.of(dir.resolve("nope.yaml"))), diags);
         assertTrue(diags.isEmpty(), diags.render("x"));
         assertNull(secrets.get("ANYTHING"));
     }

@@ -3,10 +3,11 @@ package net.ryanh.butler.config;
 /**
  * One problem found in a config file.
  *
+ * @param file the config file it was found in, or null if the source had no name
  * @param path JSON-pointer-ish location in the document, e.g. {@code /jobs/api/steps/2/uses}
  * @param loc  line and column in the source file, or null if it could not be determined
  */
-public record Diagnostic(Severity severity, String path, Loc loc, String message) {
+public record Diagnostic(Severity severity, String file, String path, Loc loc, String message) {
 
     public enum Severity {
         ERROR, WARNING
@@ -22,9 +23,9 @@ public record Diagnostic(Severity severity, String path, Loc loc, String message
     /**
      * Renders as {@code file:line:col: error: message} - the form editors and CI understand.
      */
-    public String render(String file) {
+    public String render(String fallback) {
         StringBuilder sb = new StringBuilder();
-        sb.append(file);
+        sb.append(file == null ? fallback : file);
         if (loc != null) {
             sb.append(':').append(loc.line()).append(':').append(loc.col());
         }

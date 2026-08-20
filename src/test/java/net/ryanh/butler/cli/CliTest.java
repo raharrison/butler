@@ -67,6 +67,82 @@ class CliTest {
             """;
 
     @Nested
+    @DisplayName("--config, repeated")
+    class SeveralConfigFiles {
+
+        private Path base() throws IOException {
+            return write("base.yaml", """
+                    vars:
+                      app: demo
+                    
+                    notifiers:
+                      ops:
+                        uses: notify.slack
+                        channel: "#deploys"
+                    """);
+        }
+
+        @Test
+        @DisplayName("jobs in separate files are validated as one config")
+        void filesAreMerged() throws IOException {
+            Path base = base();
+            Path jobs = write("jobs.yaml", """
+                    jobs:
+                      deploy:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: "deploying ${vars.app}"}]
+                        notify: {to: ops}
+                    """);
+            int code = Main.run("validate", "-c", base.toString(), "-c", jobs.toString());
+            assertEquals(0, code, stderr());
+            assertTrue(stdout().contains(base.toString() + ": ok"), stdout());
+            assertTrue(stdout().contains(jobs.toString() + ": ok"), stdout());
+        }
+
+        @Test
+        @DisplayName("a shared file is not a config on its own")
+        void eachFileIsNotValidatedAlone() throws IOException {
+            int code = Main.run("validate", "-c", base().toString());
+            assertEquals(1, code);
+            assertTrue(stderr().contains("no jobs defined"), stderr());
+        }
+
+        @Test
+        @DisplayName("an error names the file it is in")
+        void errorsNameTheirFile() throws IOException {
+            Path base = base();
+            Path jobs = write("jobs.yaml", """
+                    jobs:
+                      deploy:
+                        on: [{uses: manual}]
+                        tiemout: 30s
+                        steps: [{uses: control.log, message: hi}]
+                    """);
+            int code = Main.run("validate", "-c", base.toString(), "-c", jobs.toString());
+            assertEquals(1, code);
+            assertTrue(stderr().startsWith(jobs.toString() + ":4:"), stderr());
+        }
+
+        @Test
+        @DisplayName("naming one file twice is not every job defined twice")
+        void repeatsAreDropped() throws IOException {
+            Path p = write("one.yaml", MINIMAL);
+            int code = Main.run("validate", "-c", p.toString(), "-c", p.toString());
+            assertEquals(0, code, stderr());
+        }
+
+        @Test
+        void aMissingFileIsReportedByName() throws IOException {
+            Path p = write("one.yaml", MINIMAL);
+            int code = Main.run("validate", "-c", p.toString(),
+                    "-c", dir.resolve("absent.yaml").toString());
+            assertEquals(1, code);
+            assertTrue(stderr().contains("no such config file"), stderr());
+            assertTrue(stderr().contains("absent.yaml"), stderr());
+        }
+    }
+
+    @Nested
     @DisplayName("validate")
     class Validate {
 

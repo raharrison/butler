@@ -10,11 +10,17 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Options shared by every command, so they all read the same config the daemon would.
  */
 public final class ConfigMixin {
+
+    public static final Path DEFAULT_CONFIG = Path.of("/etc/butler/butler.yaml");
 
     private StepRegistry steps;
     private TriggerRegistry triggers;
@@ -24,16 +30,38 @@ public final class ConfigMixin {
 
     @Option(names = {"-c", "--config"},
             paramLabel = "<file>",
-            defaultValue = "/etc/butler/butler.yaml",
-            description = "Config file to read. Default: ${DEFAULT-VALUE}")
-    Path config;
+            arity = "1",
+            description = "Config file to read. Repeat it to spread one config over several "
+                    + "files, merged in the order given. Default: /etc/butler/butler.yaml")
+    List<Path> config = new ArrayList<>();
 
     @Option(names = "--dry-run",
             description = "Report what would happen without changing anything.")
     boolean dryRun;
 
-    public Path config() {
-        return config;
+    /**
+     * The config files to read, in order. Repeats are dropped: a file named twice would duplicate
+     * every job in it.
+     */
+    public List<Path> configs() {
+        if (config.isEmpty()) {
+            return List.of(DEFAULT_CONFIG);
+        }
+        Set<Path> seen = new LinkedHashSet<>();
+        List<Path> unique = new ArrayList<>(config.size());
+        for (Path path : config) {
+            if (seen.add(path.toAbsolutePath().normalize())) {
+                unique.add(path);
+            }
+        }
+        return List.copyOf(unique);
+    }
+
+    /**
+     * The config files as one string, for a message about all of them.
+     */
+    public String describe() {
+        return String.join(", ", configs().stream().map(Path::toString).toList());
     }
 
     public boolean dryRun() {
@@ -89,17 +117,20 @@ public final class ConfigMixin {
      * registries. A command that skipped the second would accept a config the daemon cannot run.
      */
     public ConfigLoader.Result loadAndValidate() {
-        if (!Files.exists(config)) {
-            throw new IllegalStateException("no such config file: " + config);
-        }
-        if (Files.isDirectory(config)) {
-            throw new IllegalStateException("config path is a directory: " + config);
+        List<Path> files = configs();
+        for (Path file : files) {
+            if (!Files.exists(file)) {
+                throw new IllegalStateException("no such config file: " + file);
+            }
+            if (Files.isDirectory(file)) {
+                throw new IllegalStateException("config path is a directory: " + file);
+            }
         }
         ConfigLoader.Result result;
         try {
-            result = ConfigLoader.load(config);
+            result = ConfigLoader.load(files);
         } catch (IOException e) {
-            throw new UncheckedIOException("could not read " + config, e);
+            throw new UncheckedIOException("could not read " + describe(), e);
         }
         // Before the registries are built, or a config naming a third-party step would be judged
         // against a vocabulary that does not have it yet.

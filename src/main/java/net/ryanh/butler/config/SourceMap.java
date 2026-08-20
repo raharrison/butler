@@ -74,6 +74,13 @@ public final class SourceMap {
         }
     }
 
+    /**
+     * @return the position of exactly this path, without walking up to an ancestor, or null
+     */
+    public Diagnostic.Loc at(String path) {
+        return path == null ? null : locations.get(path);
+    }
+
     private static void walk(JsonParser p, Map<String, Diagnostic.Loc> out, List<String> aliases) {
         Deque<Frame> stack = new ArrayDeque<>();
         String pendingName = null;

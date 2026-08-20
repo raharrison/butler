@@ -86,6 +86,10 @@ Three of those need explaining:
 `ProtectSystem=full` makes `/usr` and `/etc` read-only for the daemon and everything it forks.
 Anything a job writes - release directories, symlinks - needs to be under `ReadWritePaths`.
 
+`ExecStart` may repeat `--config` to read several files as one config
+([Several files](CONFIGURATION.md#several-files)). Each must be readable by the `butler` user, and
+`butler validate` needs the same list, or CI is judging a different config.
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now butler
