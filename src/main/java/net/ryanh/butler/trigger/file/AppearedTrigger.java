@@ -11,11 +11,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * Fires when a new file settles in a directory.
+ * Fires when a new file or directory settles in a directory.
  *
  * <p>Polling rather than {@code WatchService}, which misses files written before startup, behaves
  * inconsistently on network and overlay filesystems, and coalesces events under load.
@@ -26,19 +27,21 @@ public final class AppearedTrigger implements TriggerType<AppearedTrigger.Config
 
     /**
      * @param match        names to fire for; every named group becomes a {@code trigger.*} fact
-     * @param settle       how long a file's size and modification time must hold still first
+     * @param settle       how long a candidate's size and modification time must hold still first
      * @param orderBy      ranks candidates, so only the greatest fires and dropping an old
      *                     artifact into the directory cannot trigger a downgrade
      * @param onStartup    what to do about what is already there when the daemon starts
      * @param pollInterval how often to re-scan the directory; {@code settings.poll_interval} unless
      *                     set here
+     * @param kind         whether to watch for files or for directories
      */
     public record Config(Path dir, Pattern match, Duration settle, String orderBy,
-                         OnStartup onStartup, Duration pollInterval) {
+                         OnStartup onStartup, Duration pollInterval, Kind kind) {
         public Config {
             match = match != null && match.pattern().isBlank() ? null : match;
             settle = settle == null ? Duration.ofSeconds(10) : settle;
             onStartup = onStartup == null ? OnStartup.LATEST : onStartup;
+            kind = kind == null ? Kind.FILE : kind;
         }
 
         boolean ranks() {
@@ -134,29 +137,35 @@ public final class AppearedTrigger implements TriggerType<AppearedTrigger.Config
     }
 
     /**
-     * A file in the watch directory, with the event it would produce.
+     * A file or directory in the watch directory, with the event it would produce.
      */
     private record Candidate(Path file, Watched.Snapshot snapshot, Event event) {
     }
 
     /**
-     * Every matching file in the directory as it stands, settled or not.
+     * Every matching candidate in the directory as it stands, settled or not.
      */
     private List<Candidate> scan(Config config, Pattern pattern) {
         if (config.dir() == null || !Files.isDirectory(config.dir())) {
             return List.of();
         }
+        Kind kind = config.kind();
         List<Candidate> out = new ArrayList<>();
         try (Stream<Path> listed = Files.list(config.dir())) {
-            for (Path file : listed.filter(Files::isRegularFile).toList()) {
+            for (Path file : listed.filter(matching(kind)).toList()) {
                 if (pattern != null && !pattern.matcher(file.getFileName().toString()).matches()) {
                     continue;
                 }
                 try {
-                    Watched.Snapshot snapshot = Watched.Snapshot.of(file);
+                    Watched.Snapshot snapshot = Watched.snapshot(file, kind);
+                    // An empty directory has nothing to deploy, and firing for one would turn a
+                    // mkdir that a slow copy has not reached yet into a run.
+                    if (kind == Kind.DIR && snapshot.entries() == 0) {
+                        continue;
+                    }
                     out.add(new Candidate(file, snapshot,
                             new Event(name(), Watched.facts(file, snapshot, pattern),
-                                    Watched.dedupeKey(file, snapshot))));
+                                    Watched.dedupeKey(file, snapshot, kind))));
                 } catch (IOException e) {
                     // Deleted between listing and reading; the next poll will find it or not.
                     log.debug("{} vanished while being read: {}", file, e.toString());
@@ -166,6 +175,10 @@ public final class AppearedTrigger implements TriggerType<AppearedTrigger.Config
             log.warn("could not read {}: {}", config.dir(), e.toString());
         }
         return out;
+    }
+
+    private static Predicate<Path> matching(Kind kind) {
+        return kind == Kind.DIR ? Files::isDirectory : Files::isRegularFile;
     }
 
     private static List<Candidate> settled(Config config, Watched.Settling settling,

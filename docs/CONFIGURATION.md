@@ -305,7 +305,8 @@ watch thread starts, so a watcher never dies leaving the daemon reporting that i
 
 ### `file.appeared`
 
-Fires when a new file settles in a directory. The trigger the main use case rests on.
+Fires when a new file, or with `kind: dir` a new directory, settles in a directory. The trigger the
+main use case rests on.
 
 ```yaml
 - uses: file.appeared
@@ -319,14 +320,16 @@ Fires when a new file settles in a directory. The trigger the main use case rest
 | Parameter       | Type                        | Default                  |                                                                                     |
 |-----------------|-----------------------------|--------------------------|-------------------------------------------------------------------------------------|
 | `dir`           | path                        |                          | **required.** Directory to watch. Not recursive.                                    |
-| `match`         | regex                       | every file               | Matched against the whole file name. Named groups become facts.                     |
+| `kind`          | `file` \| `dir`             | `file`                   | Whether to watch for files or for directories.                                      |
+| `match`         | regex                       | everything               | Matched against the whole name. Named groups become facts.                          |
 | `settle`        | duration                    | `10s`                    | Size and mtime must be unchanged this long before firing.                           |
 | `order_by`      | *condition*                 |                          | Ranks candidates over their own facts. Only the greatest fires.                     |
-| `on_startup`    | `latest` \| `none` \| `all` | `latest`                 | What to do about files already there when the daemon starts.                        |
+| `on_startup`    | `latest` \| `none` \| `all` | `latest`                 | What to do about candidates already there when the daemon starts.                   |
 | `poll_interval` | duration                    | `settings.poll_interval` | How often to re-scan `dir`. Overrides the daemon-wide default for this one watcher. |
 
 **Facts:** `path`, `name`, `dir`, `size`, `modified`, plus every named capture group in `match`.
-**Dedupe key:** absolute path, size and mtime, so the same file rewritten is new work.
+**Dedupe key:** absolute path, size and mtime, so the same file rewritten is new work. A directory
+adds its entry count.
 
 - **Polling is the primary mechanism.** A `WatchService` misses files written before startup and
   coalesces under load; a 5s poll of one directory costs nothing.
@@ -335,6 +338,33 @@ Fires when a new file settles in a directory. The trigger the main use case rest
 - **`order_by:` means only the greatest candidate fires**, so dropping an old artifact into the
   directory cannot trigger a downgrade. It is an expression over the captured facts rather than a
   field name, which is what lets it read `semver(version)`.
+
+#### Watching for directories
+
+For a release that arrives unpacked rather than as one file. `match:` and `order_by:` read the
+directory's own name, so nothing else about the trigger changes:
+
+```yaml
+- uses: file.appeared
+  dir: /srv/artifacts/api
+  kind: dir
+  match: 'api-(?<version>\d+\.\d+\.\d+)'
+  settle: 10s
+  order_by: semver(version)
+```
+
+- **`size` and `modified` are aggregates**: the total bytes of the regular files anywhere beneath
+  the directory, and the newest mtime in the whole tree. A directory's own size is a constant and
+  its own mtime moves only when an entry is added or removed directly in it, so neither notices a
+  large file three levels down still being written, and settle detection built on them would fire
+  on a half-copied release.
+- **An empty directory never fires.** A `mkdir` that a slow-starting copy has not reached yet would
+  otherwise settle and trigger a run against nothing.
+- **The tree is walked on every poll**, one `lstat` per entry, rather than the single `stat` a file
+  costs. That is nothing for a release directory; widen `poll_interval:` before pointing this at a
+  tree with a million files in it. Symlinks are not followed.
+- **`file.changed` has no directory mode.** Its model is one path's content hash, and hashing a
+  tree is a different feature with different failure modes.
 
 ### `file.changed`
 

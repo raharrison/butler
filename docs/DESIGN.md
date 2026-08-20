@@ -873,7 +873,7 @@ Two conventions this vocabulary settled on:
 
 | Trigger              | Notes                                                                                                                           |
 |----------------------|---------------------------------------------------------------------------------------------------------------------------------|
-| **`file.appeared`**  | new file matching a regex; named groups become facts                                                                            |
+| **`file.appeared`**  | new file, or with `kind: dir` a new directory, matching a regex; named groups become facts                                      |
 | **`file.changed`**   | content hash change on a specific path                                                                                          |
 | **`schedule.every`** | fixed interval                                                                                                                  |
 | **`schedule.cron`**  | 5-field cron; small hand-written parser in `util/Cron`, so a bad expression binds as a diagnostic rather than killing a watcher |
@@ -894,6 +894,13 @@ the one with the most ways to go wrong:
   first-week failure and the DSL should make avoiding it the default, not an option.
 - **`order_by:` means only the greatest candidate fires**, so dropping an old artifact into the
   directory does not trigger a downgrade.
+- **`kind: dir` watches for directories**, for a release that arrives unpacked rather than as one
+  file. A directory cannot be judged settled the way a file is: its own size is a constant and its
+  own mtime moves only when an entry is added or removed directly in it, so neither notices a large
+  file three levels down still being written. A directory candidate is snapshotted as an aggregate
+  over its tree - total bytes, newest mtime anywhere, entry count - which is also what `size:` and
+  `modified:` report as facts, and an empty one is never a candidate. The cost is a walk per poll
+  instead of a `stat`.
 
 ---
 

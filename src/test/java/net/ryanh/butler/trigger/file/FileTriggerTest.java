@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -50,7 +51,14 @@ class FileTriggerTest {
                                                    OnStartup onStartup) {
         return new AppearedTrigger.Config(dir,
                 Pattern.compile("api-(?<version>\\d+\\.\\d+\\.\\d+)\\.jar"),
-                settle, orderBy, onStartup, null);
+                settle, orderBy, onStartup, null, Kind.FILE);
+    }
+
+    private AppearedTrigger.Config watchingDirs(Duration settle, String orderBy,
+                                                OnStartup onStartup) {
+        return new AppearedTrigger.Config(dir,
+                Pattern.compile("api-(?<version>\\d+\\.\\d+\\.\\d+)"),
+                settle, orderBy, onStartup, null, Kind.DIR);
     }
 
     private void artifact(String name, String content) throws IOException {
@@ -229,7 +237,7 @@ class FileTriggerTest {
         void aMissingDirFailsTheStart() throws Exception {
             AppearedTrigger.Config config =
                     new AppearedTrigger.Config(null, null, Duration.ofMillis(50), null,
-                            OnStartup.ALL, null);
+                            OnStartup.ALL, null, Kind.FILE);
 
             var e = assertThrows(IllegalArgumentException.class,
                     () -> new AppearedTrigger().start(config, fired::add, CTX));
@@ -274,7 +282,8 @@ class FileTriggerTest {
             TriggerContext slow = new Triggering("test", Duration.ofSeconds(10), false);
             AppearedTrigger.Config config = new AppearedTrigger.Config(dir,
                     Pattern.compile("api-(?<version>\\d+\\.\\d+\\.\\d+)\\.jar"),
-                    Duration.ofMillis(20), null, OnStartup.ALL, Duration.ofMillis(30));
+                    Duration.ofMillis(20), null, OnStartup.ALL, Duration.ofMillis(30),
+                    Kind.FILE);
 
             Watcher watcher = new AppearedTrigger().start(config, fired::add, slow);
             try {
@@ -286,6 +295,166 @@ class FileTriggerTest {
                         () -> !fired.isEmpty());
             } finally {
                 watcher.stop();
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("file.appeared with kind: dir")
+    class AppearedDirectories {
+
+        /**
+         * A release that arrives unpacked rather than as one jar.
+         */
+        private Path release(String name, String content) throws IOException {
+            Path root = Files.createDirectories(dir.resolve(name).resolve("lib"));
+            Files.writeString(root.resolve("app.jar"), content);
+            return dir.resolve(name);
+        }
+
+        @Test
+        @DisplayName("fires once a tree has settled, with the directory's own name matched")
+        void firesForADirectory() throws Exception {
+            Watcher watcher = watch(watchingDirs(Duration.ofMillis(50), null, OnStartup.ALL));
+            try {
+                release("api-1.2.4", "jar");
+                eventually("the release to fire", () -> !fired.isEmpty());
+
+                Event event = fired.getFirst();
+                assertEquals("1.2.4", event.facts().get("version"));
+                assertEquals("api-1.2.4", event.facts().get("name"));
+                // The size of everything beneath it, not the directory entry's own.
+                assertEquals(3L, event.facts().get("size"));
+                assertTrue(String.valueOf(event.facts().get("path")).endsWith("api-1.2.4"));
+            } finally {
+                watcher.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("a file still being written inside the tree holds the whole tree back")
+        void settleHoldsBackATreeStillBeingFilled() throws Exception {
+            Watcher watcher = watch(watchingDirs(Duration.ofMillis(200), null, OnStartup.ALL));
+            try {
+                // Written into a subdirectory, and for well over the settle window, so the top
+                // directory's own size and mtime never move while the copy is in flight.
+                Path file = release("api-1.2.4", "chunk-").resolve("lib").resolve("app.jar");
+                for (int i = 0; i < 8; i++) {
+                    Thread.sleep(80);
+                    Files.writeString(file, "chunk-" + i, StandardOpenOption.APPEND);
+                    assertTrue(fired.isEmpty(), "an unpacked release is exactly as damaging "
+                            + "half-copied as a jar is half-uploaded");
+                }
+                eventually("the finished release to fire", () -> !fired.isEmpty());
+                assertEquals(1, fired.size());
+            } finally {
+                watcher.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("an empty directory is not a candidate, so a mkdir alone fires nothing")
+        void anEmptyDirectoryNeverFires() throws Exception {
+            Watcher watcher = watch(watchingDirs(Duration.ofMillis(50), null, OnStartup.ALL));
+            try {
+                Files.createDirectory(dir.resolve("api-1.2.4"));
+                never(() -> !fired.isEmpty());
+            } finally {
+                watcher.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("order_by ranks directories, so an older release unpacked later is ignored")
+        void aLowerVersionAppearingLaterDoesNotFire() throws Exception {
+            Watcher watcher = watch(watchingDirs(Duration.ofMillis(50), "semver(version)",
+                    OnStartup.ALL));
+            try {
+                release("api-1.2.4", "new");
+                eventually("1.2.4 to fire", () -> !fired.isEmpty());
+                assertEquals("1.2.4", fired.getFirst().facts().get("version"));
+
+                release("api-1.2.3", "old");
+                never(() -> fired.size() > 1);
+            } finally {
+                watcher.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("on_startup: latest fires for the greatest release already unpacked")
+        void restartWithAReleaseAlreadyPresent() throws Exception {
+            release("api-1.2.3", "old");
+            release("api-1.2.4", "new");
+
+            Watcher watcher = watch(watchingDirs(Duration.ofMillis(50), "semver(version)",
+                    OnStartup.LATEST));
+            try {
+                eventually("the newest release to fire", () -> !fired.isEmpty());
+                Thread.sleep(200);
+                assertEquals(1, fired.size(), "only the greatest fires");
+                assertEquals("1.2.4", fired.getFirst().facts().get("version"));
+            } finally {
+                watcher.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("each kind ignores the other, so no config written today changes meaning")
+        void theTwoKindsDoNotSeeEachOther() throws Exception {
+            release("api-1.2.4", "unpacked");
+            artifact("api-1.2.3.jar", "jar");
+
+            Watcher dirs = watch(watchingDirs(Duration.ofMillis(50), null, OnStartup.ALL));
+            try {
+                eventually("the release to fire", () -> !fired.isEmpty());
+                Thread.sleep(200);
+                assertEquals(List.of("1.2.4"),
+                        fired.stream().map(e -> e.facts().get("version")).toList());
+            } finally {
+                dirs.stop();
+            }
+
+            fired.clear();
+            Watcher files = watch(watching(dir, Duration.ofMillis(50), null, OnStartup.ALL));
+            try {
+                eventually("the jar to fire", () -> !fired.isEmpty());
+                Thread.sleep(200);
+                assertEquals(List.of("1.2.3"),
+                        fired.stream().map(e -> e.facts().get("version")).toList());
+            } finally {
+                files.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("current() reports the settled directories, greatest last")
+        void currentReportsTheSettledDirectories() throws Exception {
+            release("api-1.9.0", "a");
+            release("api-1.10.0", "b");
+            artifact("api-1.2.3.jar", "ignored, it is a file");
+            age(dir.resolve("api-1.9.0"), dir.resolve("api-1.10.0"));
+
+            List<Event> events = new AppearedTrigger().current(
+                    watchingDirs(Duration.ofSeconds(10), "semver(version)", OnStartup.LATEST),
+                    CTX);
+
+            assertEquals(List.of("1.9.0", "1.10.0"),
+                    events.stream().map(e -> e.facts().get("version")).toList());
+        }
+
+        /**
+         * Settle is judged from the newest mtime in the tree in a single-shot look, so every entry
+         * has to be aged, not only the directory.
+         */
+        private void age(Path... trees) throws IOException {
+            FileTime old = FileTime.from(Instant.now().minusSeconds(60));
+            for (Path tree : trees) {
+                try (Stream<Path> walked = Files.walk(tree)) {
+                    for (Path p : walked.toList()) {
+                        Files.setLastModifiedTime(p, old);
+                    }
+                }
             }
         }
     }

@@ -4,6 +4,7 @@ import net.ryanh.butler.spi.TriggerContext;
 import net.ryanh.butler.util.Literals;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -13,6 +14,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * What both file triggers share: a file's facts, its dedupe key, and settle detection.
@@ -29,13 +31,45 @@ final class Watched {
     }
 
     /**
-     * One observation of a file: enough to tell whether it is still being written.
+     * One observation of a file or a directory: enough to tell whether it is still being written.
      */
-    record Snapshot(long size, long modified) {
+    record Snapshot(long size, long modified, long entries) {
 
         static Snapshot of(Path file) throws IOException {
-            return new Snapshot(Files.size(file), Files.getLastModifiedTime(file).toMillis());
+            return new Snapshot(Files.size(file), Files.getLastModifiedTime(file).toMillis(), 1);
         }
+
+        /**
+         * A directory as the sum of everything beneath it: total bytes of the regular files, the
+         * newest mtime anywhere in the tree, and how many entries there are. A directory's own
+         * size is a constant and its own mtime moves only when an entry is added or removed
+         * directly in it, so neither notices a large file three levels down still being written.
+         *
+         * <p>{@link Files#walk} does not follow symlinks, so there is no loop to guard against.
+         */
+        static Snapshot ofTree(Path dir) throws IOException {
+            long size = 0;
+            long modified = Files.getLastModifiedTime(dir).toMillis();
+            long entries = 0;
+            try (Stream<Path> tree = Files.walk(dir)) {
+                for (Path p : tree.skip(1).toList()) {
+                    entries++;
+                    if (Files.isRegularFile(p)) {
+                        size += Files.size(p);
+                    }
+                    modified = Math.max(modified, Files.getLastModifiedTime(p).toMillis());
+                }
+            } catch (UncheckedIOException e) {
+                // Files.walk reports an unreadable subtree mid-stream; the tree is not observable
+                // this poll, which the caller treats as it treats a file that vanished.
+                throw e.getCause();
+            }
+            return new Snapshot(size, modified, entries);
+        }
+    }
+
+    static Snapshot snapshot(Path path, Kind kind) throws IOException {
+        return kind == Kind.DIR ? Snapshot.ofTree(path) : Snapshot.of(path);
     }
 
     /**
@@ -105,11 +139,13 @@ final class Watched {
 
     /**
      * Absolute path, size and modification time, so the same file written again is new work and
-     * the same file seen twice is not.
+     * the same file seen twice is not. A directory adds its entry count, so a tree whose files
+     * were shuffled without a net change in size is still new work.
      */
-    static String dedupeKey(Path file, Snapshot snapshot) {
-        return Literals.path(file.toAbsolutePath()) + ":" + snapshot.size() + ":"
+    static String dedupeKey(Path file, Snapshot snapshot, Kind kind) {
+        String key = Literals.path(file.toAbsolutePath()) + ":" + snapshot.size() + ":"
                 + snapshot.modified();
+        return kind == Kind.DIR ? key + ":" + snapshot.entries() : key;
     }
 
     /**

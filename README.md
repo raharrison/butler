@@ -268,13 +268,13 @@ valid only inside a `discover:` block.
 
 ### Triggers
 
-| Trigger                                                 | Fires when                            | Key parameters                                                |
-|---------------------------------------------------------|---------------------------------------|---------------------------------------------------------------|
-| [`file.appeared`](docs/CONFIGURATION.md#fileappeared)   | a new file settles in a directory     | `dir` (required), `match`, `settle`, `order_by`, `on_startup` |
-| [`file.changed`](docs/CONFIGURATION.md#filechanged)     | one file's contents change            | `path` (required), `settle`, `on_startup`                     |
-| [`schedule.every`](docs/CONFIGURATION.md#scheduleevery) | a fixed interval elapses              | `interval` (default `1h`)                                     |
-| [`schedule.cron`](docs/CONFIGURATION.md#schedulecron)   | a 5-field cron expression comes round | `expression` (required), `timezone`                           |
-| [`manual`](docs/CONFIGURATION.md#manual)                | `butler trigger` asks it to           | none                                                          |
+| Trigger                                                 | Fires when                                     | Key parameters                                                        |
+|---------------------------------------------------------|------------------------------------------------|-----------------------------------------------------------------------|
+| [`file.appeared`](docs/CONFIGURATION.md#fileappeared)   | a new file or directory settles in a directory | `dir` (required), `kind`, `match`, `settle`, `order_by`, `on_startup` |
+| [`file.changed`](docs/CONFIGURATION.md#filechanged)     | one file's contents change                     | `path` (required), `settle`, `on_startup`                             |
+| [`schedule.every`](docs/CONFIGURATION.md#scheduleevery) | a fixed interval elapses                       | `interval` (default `1h`)                                             |
+| [`schedule.cron`](docs/CONFIGURATION.md#schedulecron)   | a 5-field cron expression comes round          | `expression` (required), `timezone`                                   |
+| [`manual`](docs/CONFIGURATION.md#manual)                | `butler trigger` asks it to                    | none                                                                  |
 
 A trigger's parameters are never templated: a watcher starts before any event exists, so there is
 no run to resolve `${...}` against.
