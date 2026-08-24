@@ -151,33 +151,102 @@ public final class ConfigValidator {
      * Register names are unique across the whole job, and a step may only reference results from
      * steps that have already run. Discovery runs before everything, so what it registers is
      * visible to the pipeline; hooks run after the pipeline and can see all of it.
+     *
+     * <p>{@code persist:} and the {@code notify:} messages are rendered after the hooks, and which
+     * hooks ran depends on how the run ended, so each is judged against its own outcome's path
+     * (DESIGN.md §2.1).
      */
     private static void checkRegisterNames(JobDef job, Diagnostics diags, Vocabulary vocabulary) {
-        Set<String> everyName = new LinkedHashSet<>();
-        for (StepDef step : allSteps(job)) {
-            if (step.register() != null) {
-                everyName.add(step.register());
-            }
-        }
+        Map<String, String> sections = registeringSections(job);
+        Set<String> everyName = sections.keySet();
 
         Set<String> declared = new LinkedHashSet<>();
         Set<String> afterDiscover =
                 checkSection(job.discover(), diags, Set.of(), declared, everyName, vocabulary);
         Set<String> afterSteps =
                 checkSection(job.steps(), diags, afterDiscover, declared, everyName, vocabulary);
-        checkSection(job.onFailure(), diags, afterSteps, declared, everyName, vocabulary);
-        checkSection(job.onSuccess(), diags, afterSteps, declared, everyName, vocabulary);
-        checkSection(job.always(), diags, afterSteps, declared, everyName, vocabulary);
+        Set<String> afterFailure =
+                checkSection(job.onFailure(), diags, afterSteps, declared, everyName, vocabulary);
+        Set<String> afterSuccess =
+                checkSection(job.onSuccess(), diags, afterSteps, declared, everyName, vocabulary);
+        Set<String> afterAlways =
+                checkSection(job.always(), diags, afterSteps, declared, everyName, vocabulary);
+
+        Set<String> onSuccess = union(afterSuccess, afterAlways);
+        Set<String> onFailure = union(afterFailure, afterAlways);
+
+        // persist: is written only by a run that succeeded.
+        job.persist().forEach((k, v) -> checkRendered(diags, job.path() + "/persist/" + k, v,
+                onSuccess, sections, "succeeds"));
+
+        if (job.notifyPolicy() != null) {
+            job.notifyPolicy().messages().forEach((outcome, message) -> {
+                boolean success = outcome.equals("success");
+                checkRendered(diags, job.path() + "/notify/" + outcome, message,
+                        success ? onSuccess : onFailure, sections,
+                        success ? "succeeds" : "fails");
+            });
+        }
     }
 
-    private static List<StepDef> allSteps(JobDef job) {
-        List<StepDef> out = new ArrayList<>();
-        out.addAll(job.discover());
-        out.addAll(job.steps());
-        out.addAll(job.onFailure());
-        out.addAll(job.onSuccess());
-        out.addAll(job.always());
+    /**
+     * Which section registers each name, so a message can say why one is out of scope rather than
+     * only that it is.
+     */
+    private static Map<String, String> registeringSections(JobDef job) {
+        Map<String, String> out = new LinkedHashMap<>();
+        noteRegisters(out, "discover", job.discover());
+        noteRegisters(out, "steps", job.steps());
+        noteRegisters(out, "on_failure", job.onFailure());
+        noteRegisters(out, "on_success", job.onSuccess());
+        noteRegisters(out, "always", job.always());
         return out;
+    }
+
+    private static void noteRegisters(Map<String, String> out, String section,
+                                      List<StepDef> steps) {
+        for (StepDef step : steps) {
+            if (step.register() != null) {
+                // The first wins; a name registered twice is reported by checkSection.
+                out.putIfAbsent(step.register(), section);
+            }
+        }
+    }
+
+    private static Set<String> union(Set<String> a, Set<String> b) {
+        Set<String> out = new LinkedHashSet<>(a);
+        out.addAll(b);
+        return out;
+    }
+
+    /**
+     * A template rendered once the run is over. Unlike a step, it cannot be reached by every path
+     * through the job, so a name a hook the other outcome runs is a reference that would silently
+     * render as nothing.
+     *
+     * @param outcome how the run ended for this template to be rendered at all
+     */
+    private static void checkRendered(Diagnostics diags, String path, String template,
+                                      Set<String> visible, Map<String, String> sections,
+                                      String outcome) {
+        // A template that does not parse is already reported at this path, and produced no
+        // references to judge.
+        if (template == null || diags.hasErrorAt(path)) {
+            return;
+        }
+        Set<String> referenced = new LinkedHashSet<>();
+        collectStepRefsFromValue(template, referenced);
+
+        for (String name : referenced) {
+            if (visible.contains(name)) {
+                continue;
+            }
+            diags.error(path, sections.containsKey(name)
+                    ? "references steps." + name + ", registered in " + sections.get(name)
+                      + ":, which does not run when the job " + outcome
+                    : "references steps." + name + " but no step registers that name"
+                      + Suggestions.from(name, sections.keySet()));
+        }
     }
 
     /**

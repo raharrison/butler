@@ -634,6 +634,146 @@ class DiagnosticsTest {
                     """);
             assertAt(d, 6, "not a usable name");
         }
+
+        @Test
+        @DisplayName("a notify message naming nothing is caught, not left to the first real failure")
+        void notifyMessageReferencesAnUnknownName() {
+            var d = only("""
+                    notifiers:
+                      ops: {uses: notify.webhook, url: "http://localhost/x"}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                            register: rollback
+                        notify:
+                          to: ops
+                          failure: "rollback ${steps.rollbck.status}"
+                    """);
+            assertAt(d, 11, "no step registers that name");
+            assertTrue(d.message().contains("rollback"), d.message());
+        }
+
+        @Test
+        @DisplayName("a persist value naming nothing is caught the same way")
+        void persistReferencesAnUnknownName() {
+            var d = only("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                        persist:
+                          last: ${steps.nosuch.status}
+                    """);
+            assertAt(d, 7, "no step registers that name");
+        }
+
+        @Test
+        @DisplayName("a hook's registration is in scope for the message its own outcome renders")
+        void hookRegistrationsReachTheirOwnOutcome() {
+            var r = loadAndValidate("""
+                    notifiers:
+                      ops: {uses: notify.webhook, url: "http://localhost/x"}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                            register: staged
+                        on_failure:
+                          - uses: control.log
+                            register: rollback
+                        always:
+                          - uses: control.log
+                            register: tidy
+                        notify:
+                          to: ops
+                          failure: "at ${run.failed_step}, rollback ${steps.rollback.status},
+                            staged ${steps.staged.status}, tidy ${steps.tidy.status}"
+                    """);
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+        }
+
+        @Test
+        @DisplayName("a message cannot name a hook the other outcome runs")
+        void hookRegistrationsDoNotCrossOutcomes() {
+            var d = only("""
+                    notifiers:
+                      ops: {uses: notify.webhook, url: "http://localhost/x"}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                        on_failure:
+                          - uses: control.log
+                            register: rollback
+                        notify:
+                          to: ops
+                          success: "rolled back ${steps.rollback.status}"
+                    """);
+            assertAt(d, 13, "registered in on_failure:, which does not run when the job succeeds");
+        }
+
+        @Test
+        @DisplayName("persist is written only by a run that succeeded, so on_failure is out of scope")
+        void persistCannotNameAFailureHook() {
+            var d = only("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                        on_failure:
+                          - uses: control.log
+                            register: rollback
+                        persist:
+                          last: ${steps.rollback.status}
+                    """);
+            assertAt(d, 10, "registered in on_failure:, which does not run when the job succeeds");
+        }
+
+        @Test
+        @DisplayName("a failure message cannot name an on_success hook either")
+        void failureMessageCannotNameASuccessHook() {
+            var d = only("""
+                    notifiers:
+                      ops: {uses: notify.webhook, url: "http://localhost/x"}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                        on_success:
+                          - uses: control.log
+                            register: cleanup
+                        notify:
+                          to: ops
+                          failure: "cleanup ${steps.cleanup.status}"
+                    """);
+            assertAt(d, 13, "registered in on_success:, which does not run when the job fails");
+        }
+
+        @Test
+        @DisplayName("a malformed message is one mistake, not two")
+        void aMalformedMessageIsReportedOnce() {
+            var d = only("""
+                    notifiers:
+                      ops: {uses: notify.webhook, url: "http://localhost/x"}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - uses: control.log
+                        notify:
+                          to: ops
+                          failure: "${nope.thing} and ${steps.nosuch.status}"
+                    """);
+            assertAt(d, 10, "unknown namespace");
+        }
+
     }
 
     @Nested

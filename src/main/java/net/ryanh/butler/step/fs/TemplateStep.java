@@ -21,7 +21,8 @@ public final class TemplateStep implements StepType<TemplateStep.Config> {
      * @param content the template inline instead, already rendered by the time the step sees it
      *                like any other parameter
      */
-    public record Config(Path from, String content, Path to, String mode, boolean mkdirs) {
+    public record Config(Path from, String content, Path to, String mode, String owner,
+                         String group, boolean mkdirs) {
     }
 
     @Override
@@ -61,6 +62,7 @@ public final class TemplateStep implements StepType<TemplateStep.Config> {
         }
         Files.writeString(c.to(), rendered);
         Fs.applyMode(c.to(), c.mode());
+        Fs.applyOwnership(c.to(), c.owner(), c.group());
         return StepResult.ok()
                 .output("path", Literals.path(c.to()))
                 .output("bytes", (long) rendered.length());
@@ -106,8 +108,12 @@ public final class TemplateStep implements StepType<TemplateStep.Config> {
             // The name only: the message carries a path in the platform's spelling.
             lines.add("      cannot be rendered yet: " + e.getClass().getSimpleName());
         }
-        if (c.mode() != null && !c.mode().isBlank()) {
+        if (Fs.named(c.mode())) {
             lines.add("      mode " + c.mode());
+        }
+        String ownership = Fs.ownership(c.owner(), c.group());
+        if (ownership != null) {
+            lines.add("      " + ownership);
         }
         return String.join("\n", lines);
     }
@@ -121,6 +127,7 @@ public final class TemplateStep implements StepType<TemplateStep.Config> {
         if (c.from() != null) {
             warnings.addAll(Fs.transferChecks(c.from(), c.to(), c.mkdirs()));
         }
+        warnings.addAll(Fs.ownershipChecks(c.owner(), c.group()));
         return List.copyOf(warnings);
     }
 }

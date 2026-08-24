@@ -278,6 +278,31 @@ omitted: `47s`, `20m 47s`, `1h 1s`. `run.duration_ms` is the exact figure as a n
 message that wants millisecond precision or a condition that wants to compare
 (`run.duration_ms > 300000`).
 
+**A message is rendered after the hooks have run**, and a hook step registers like any other, so
+the failure message can say whether the rollback took:
+
+```yaml
+on_failure:
+  - name: Roll back symlink
+    uses: fs.symlink
+    link: /srv/apps/api/current
+    target: ${steps.symlink.previous_target}
+    register: rollback
+
+notify:
+  to: ops
+  on: [ failure ]
+  failure: ":fire: api FAILED at ${run.failed_step}, rollback ${steps.rollback.status}"
+```
+
+That reads `ok`, `failed` or `skipped`, which is three different answers: it worked, it did not, or
+there was nothing to undo. `run.status` and `run.failed_step` are fixed before the hooks start, so
+they always describe the pipeline. A hook step that fails is logged and leaves the run's own status
+standing, and the only place that shows up is `steps.<name>.*`.
+
+To send something the moment a run fails, before any cleanup, use a [`notify.send`](#notifysend)
+step at the top of `on_failure:`. That is two messages, deliberately.
+
 ---
 
 ## Steps
@@ -316,6 +341,14 @@ which is valid only inside a `discover:` block.
 | `env`               | Environment for a process-backed step, merged over the job's `env:`.                             |
 | `working_dir`       | Directory a process-backed step starts in.                                                       |
 | `run_as`            | User to become, as `sudo -u <user>`. Needs its own sudoers grant.                                |
+
+**A `steps.<name>` reference has to be one that could exist by the time it is read**, and
+`butler validate` says so where it is not. A step may only name a step that already ran, so a
+forward reference is an error rather than an empty value. `persist:` and the `notify:` messages are
+rendered after the hooks, so each may name whatever its own outcome ran: a `failure:` message can
+read an `on_failure:` register, a `success:` message and `persist:` can read an `on_success:` one,
+and either can read `always:`. Naming across that line is an error, because it could only ever
+render as nothing.
 
 A step's own `timeout:` and the job's `timeout:` are not two racing mechanisms: the job's is a
 deadline that caps what each step is given, so a job with five minutes left never hands a step ten.
@@ -600,17 +633,21 @@ from an event: a path holding a space is passed through untouched rather than re
 
 #### `fs.copy`
 
-Copy a file, creating parent directories and setting its mode.
+Copy a file, creating parent directories and setting its mode and owner.
 
 | Parameter   | Type       | Default     |                                    |
 |-------------|------------|-------------|------------------------------------|
 | `from`      | path       |             | **required**                       |
 | `to`        | path       |             | **required**                       |
 | `mode`      | text       | leave as-is | Octal, quoted: `"0640"`.           |
+| `owner`     | text       | leave as-is | User name, applied after `mode`.   |
+| `group`     | text       | leave as-is | Group name.                        |
 | `mkdirs`    | true/false | `false`     | Create the directories above `to`. |
 | `overwrite` | true/false | `true`      |                                    |
 
 **Outputs:** `path`, `bytes`.
+
+See [owner and group](#owner-and-group) for what happens where the host has neither.
 
 #### `fs.move`
 
@@ -622,6 +659,8 @@ otherwise, as `mv` is.
 | `from`      | path       |             | **required** |
 | `to`        | path       |             | **required** |
 | `mode`      | text       | leave as-is |              |
+| `owner`     | text       | leave as-is |              |
+| `group`     | text       | leave as-is |              |
 | `mkdirs`    | true/false | `false`     |              |
 | `overwrite` | true/false | `true`      |              |
 
@@ -694,11 +733,13 @@ that wants a missing path to end the run asserts on `exists`.
 
 Create a directory.
 
-| Parameter | Type       | Default     |                                      |
-|-----------|------------|-------------|--------------------------------------|
-| `path`    | path       |             | **required**                         |
-| `mode`    | text       | leave as-is |                                      |
-| `parents` | true/false | `true`      | Create the directories above it too. |
+| Parameter | Type       | Default     |                                        |
+|-----------|------------|-------------|----------------------------------------|
+| `path`    | path       |             | **required**                           |
+| `mode`    | text       | leave as-is |                                        |
+| `owner`   | text       | leave as-is | The directory itself, not its parents. |
+| `group`   | text       | leave as-is |                                        |
+| `parents` | true/false | `true`      | Create the directories above it too.   |
 
 **Outputs:** `path`, `created` (false if it was already there).
 
@@ -712,6 +753,8 @@ Write a file whose `${...}` holes are filled in from the run. Takes `from:` or `
 | `from`    | path       |             | A template file, read and rendered by this step.        |
 | `content` | text       |             | The template inline, rendered like any other parameter. |
 | `mode`    | text       | leave as-is |                                                         |
+| `owner`   | text       | leave as-is |                                                         |
+| `group`   | text       | leave as-is |                                                         |
 | `mkdirs`  | true/false | `false`     |                                                         |
 
 **Outputs:** `path`, `bytes`.
@@ -733,6 +776,86 @@ Delete all but the newest entries of a directory.
 symlink beside the pruned directory, is kept whatever the `keep:` arithmetic says, and the step
 reports what it spared. After a rollback by hand the running release is an old one, and deleting it
 takes the application down.
+
+#### `fs.delete`
+
+Delete one named path. `fs.prune` decides which entries of a directory to keep; this deletes the
+thing you name and nothing else.
+
+| Parameter   | Type       | Default |                                                           |
+|-------------|------------|---------|-----------------------------------------------------------|
+| `path`      | path       |         | **required**                                              |
+| `recursive` | true/false | `false` | Permission to delete a directory that has anything in it. |
+
+**Outputs:** `path`, `deleted` (false if there was nothing there).
+
+Three rules, all of them about the paths a config did not mean to name:
+
+1. **A directory with anything in it needs `recursive: true`.** Without it the step fails and
+   deletes nothing, so a path that turns out to be more than you expected stops the run.
+2. **A symlink is removed as the link it is**, leaving what it points at alone.
+3. **The root of a filesystem is refused**, because an unset var is how `${vars.root}/releases`
+   becomes `/`. An empty `path:` is refused for the same reason: it would mean the daemon's
+   working directory.
+
+Deleting what is not there **succeeds** and reports `deleted: false`. Cleanup runs after work that
+may not have got far enough to leave anything behind, and a hook that fails on the second run is
+worse than useless. A dry run counts what a recursive delete would take:
+
+```
+    3  Clear staging                  fs.delete
+         would delete /srv/apps/api/staging
+               a directory holding 41 entries
+```
+
+#### `fs.unpack`
+
+Unpack a tar archive into a directory, for a release that ships as a tarball rather than as one
+file.
+
+| Parameter          | Type       | Default |                                             |
+|--------------------|------------|---------|---------------------------------------------|
+| `from`             | path       |         | **required.** The archive.                  |
+| `to`               | path       |         | **required.** The directory to unpack into. |
+| `strip_components` | number     | `0`     | Leading path elements to drop.              |
+| `mkdirs`           | true/false | `true`  | Create `to` if it is missing.               |
+
+**Outputs:** `path`, `stdout`, `stderr`, `exit_code`.
+
+This is the one `fs.*` step that starts a process: it runs `tar`, which detects the compression
+itself, so `.tar`, `.tar.gz`, `.tar.bz2` and `.tar.xz` all work, and which refuses a member whose
+name would escape `to:`. `strip_components: 1` is for the usual archive that wraps everything in
+one directory named after the version.
+
+Extraction passes `--no-same-owner`: the numeric ids in an archive built somewhere else mean
+nothing here, and unpacking as root would otherwise scatter a build machine's numbering across the
+host. Set the ownership you want with `fs.mkdir` on `to:` beforehand, or with the `owner:` on
+whatever step puts the release in place.
+
+#### owner and group
+
+`fs.copy`, `fs.move`, `fs.mkdir` and `fs.template` each take `owner:` and `group:` beside `mode:`,
+so landing a release as `app:app` does not need a `shell.run chown`.
+
+```yaml
+- uses: fs.copy
+  from: ${trigger.path}
+  to: ${vars.releases_root}/api/releases/${trigger.version}/api.jar
+  mode: "0640"
+  owner: app
+  group: app
+```
+
+Names, not numbers, and applied after `mode:`. Changing a file's owner needs privilege the daemon
+usually has to be given: see [privileges](OPERATING.md#privileges).
+
+- **A name the host does not know fails the step.** The file exists but is not the file the config
+  asked for, and a service that cannot read its own release is worse than a deploy that stopped.
+  `butler validate` cannot catch it, since the config is normally validated somewhere other than
+  the host it runs on, but a dry run **on the host** warns.
+- **Where the filesystem has no notion of ownership it is skipped**, as `mode:` is. A config
+  describes a Linux host whatever machine reads it.
+- `fs.mkdir` applies them to the directory it names, not to any parents `parents: true` created.
 
 ### `systemd`
 

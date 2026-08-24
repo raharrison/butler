@@ -307,7 +307,7 @@ build you are running. Full parameter tables, defaults and outputs are in
 | `control.fail`        | Fail the run with a message.                                                    |
 | `shell.run`           | Run a script through a shell. The escape hatch.                                 |
 | `shell.exec`          | Run a program with explicit arguments, no shell.                                |
-| `fs.copy`             | Copy a file, creating parent directories and setting its mode.                  |
+| `fs.copy`             | Copy a file, creating parent directories and setting its mode and owner.        |
 | `fs.move`             | Move a file or directory.                                                       |
 | `fs.symlink`          | Point a symlink at a target, atomically. Reports `previous_target`.             |
 | `fs.readlink`         | Report what a symlink points at.                                                |
@@ -317,6 +317,8 @@ build you are running. Full parameter tables, defaults and outputs are in
 | `fs.mkdir`            | Create a directory.                                                             |
 | `fs.template`         | Write a file, filling in `${...}` from the run.                                 |
 | `fs.prune`            | Delete all but the newest entries of a directory. Never deletes what is in use. |
+| `fs.delete`           | Delete one named path. A non-empty directory needs `recursive: true`.           |
+| `fs.unpack`           | Unpack a tar archive into a directory.                                          |
 | `systemd.restart`     | Restart a unit, waiting for it to become active.                                |
 | `systemd.start`       | Start a unit, waiting for it to become active.                                  |
 | `systemd.stop`        | Stop a unit, waiting for it to become inactive.                                 |

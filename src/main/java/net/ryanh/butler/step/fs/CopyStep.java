@@ -23,10 +23,13 @@ public final class CopyStep implements StepType<CopyStep.Config> {
 
     /**
      * @param mode      octal permissions for the copy, as the config writes them: {@code "0640"}
+     * @param owner     user the copy should belong to, by name
+     * @param group     group the copy should belong to, by name
      * @param mkdirs    create the directories above {@code to} if they are missing
      * @param overwrite replace an existing destination; true unless the config says otherwise
      */
-    public record Config(Path from, Path to, String mode, boolean mkdirs, Boolean overwrite) {
+    public record Config(Path from, Path to, String mode, String owner, String group,
+                         boolean mkdirs, Boolean overwrite) {
         public Config {
             overwrite = overwrite == null || overwrite;
         }
@@ -49,7 +52,7 @@ public final class CopyStep implements StepType<CopyStep.Config> {
 
     @Override
     public String summary() {
-        return "Copy a file, creating parent directories and setting its mode";
+        return "Copy a file, creating parent directories and setting its mode and owner";
     }
 
     @Override
@@ -76,6 +79,7 @@ public final class CopyStep implements StepType<CopyStep.Config> {
                     + Literals.path(c.to()));
         }
         Fs.applyMode(c.to(), c.mode());
+        Fs.applyOwnership(c.to(), c.owner(), c.group());
         return StepResult.ok()
                 .output("path", Literals.path(c.to()))
                 .output("bytes", Files.size(c.to()));
@@ -91,8 +95,12 @@ public final class CopyStep implements StepType<CopyStep.Config> {
         lines.add("      to     " + Literals.path(c.to()));
 
         List<String> notes = new ArrayList<>();
-        if (c.mode() != null && !c.mode().isBlank()) {
+        if (Fs.named(c.mode())) {
             notes.add("mode " + c.mode());
+        }
+        String ownership = Fs.ownership(c.owner(), c.group());
+        if (ownership != null) {
+            notes.add(ownership);
         }
         int missing = Fs.missingParents(c.to());
         if (c.mkdirs() && missing > 0) {
@@ -113,13 +121,14 @@ public final class CopyStep implements StepType<CopyStep.Config> {
             return List.of();
         }
         List<String> warnings = new ArrayList<>(Fs.transferChecks(c.from(), c.to(), c.mkdirs()));
-        if (c.mode() != null && !c.mode().isBlank()) {
+        if (Fs.named(c.mode())) {
             try {
                 Fs.mode(c.mode());
             } catch (IllegalArgumentException e) {
                 warnings.add(e.getMessage());
             }
         }
+        warnings.addAll(Fs.ownershipChecks(c.owner(), c.group()));
         return List.copyOf(warnings);
     }
 }

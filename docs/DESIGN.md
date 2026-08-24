@@ -253,6 +253,7 @@ jobs:
         target: ${steps.symlink.previous_target}
         atomic: true
         when: exists(steps.symlink.previous_target)
+        register: rollback           # so notify: can report whether it took
 
       - uses: systemd.restart
         unit: api.service
@@ -265,7 +266,7 @@ jobs:
       to: ops
       on: [ success, failure ]
       success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
-      failure: ":fire: api ${trigger.version} FAILED at step ${run.failed_step}"
+      failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}, rollback ${steps.rollback.status}"
 ```
 
 Note what is *not* in there: no bash, no version comparison logic, no retry loops, no "is it up
@@ -424,6 +425,15 @@ allowing both would be two ways to do one thing.
 Unknown paths evaluate to `null` rather than throwing, but referencing an unknown *namespace*
 is a validation error. That catches `${triger.version}` at load time while still allowing
 `default(state.deployed_version, "0.0.0")` on a first run.
+
+`steps.<name>` is the exception, and is checked against the names the job actually registers,
+because it is the one path whose absence is always a mistake rather than a first run: nothing will
+ever put it there. A step may only name one that already ran. `persist:` and the `notify:` messages
+are rendered after the hooks (§2.1), so each is judged against the sections its own outcome runs,
+which is what lets a `failure:` message report whether the `on_failure:` rollback took while a
+`success:` message naming the same register is refused. A notification is the one expression a dry
+run cannot rehearse: the failure template is first rendered by a real failure, which is the worst
+moment to find out it says nothing.
 
 **Null is not silently ordered.** `==` and `!=` accept null on either side, and `matches` and
 `contains` treat it as no-match, because an absent path is an ordinary state of affairs. Ordering
@@ -868,25 +878,30 @@ isolating them from each other would buy nothing.
 
 Bold entries are v1.
 
-| Namespace | Steps                                                                                                                                   |
-|-----------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| `fs`      | **copy**, **move**, **symlink**, **readlink**, **read**, **list**, **mkdir**, **prune**, **template**, **exists**, chmod, chown, unpack |
-| `systemd` | **restart**, **start**, **stop**, **reload**, **wait_active**, **status**, enable                                                       |
-| `shell`   | **run** (via shell), **exec** (argv, no shell)                                                                                          |
-| `http`    | **request**, **wait**                                                                                                                   |
-| `notify`  | **send** (slack, discord, generic webhook, ntfy; email later)                                                                           |
-| `control` | **set**, **assert**, **sleep**, **log**, **fail**, parallel, group                                                                      |
-| `docker`  | pull, compose, run, prune                                                                                                               |
-| `git`     | clone, pull, checkout                                                                                                                   |
-| `pkg`     | apt, snap                                                                                                                               |
+| Namespace | Steps                                                                                                                                                   |
+|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `fs`      | **copy**, **move**, **symlink**, **readlink**, **read**, **list**, **mkdir**, **prune**, **template**, **exists**, **delete**, **unpack**, chmod, chown |
+| `systemd` | **restart**, **start**, **stop**, **reload**, **wait_active**, **status**, enable                                                                       |
+| `shell`   | **run** (via shell), **exec** (argv, no shell)                                                                                                          |
+| `http`    | **request**, **wait**                                                                                                                                   |
+| `notify`  | **send** (slack, discord, generic webhook, ntfy; email later)                                                                                           |
+| `control` | **set**, **assert**, **sleep**, **log**, **fail**, parallel, group                                                                                      |
+| `docker`  | pull, compose, run, prune                                                                                                                               |
+| `git`     | clone, pull, checkout                                                                                                                                   |
+| `pkg`     | apt, snap                                                                                                                                               |
 
-Two conventions this vocabulary settled on:
+Three conventions this vocabulary settled on:
 
 - **`order_by:` is an expression where it ranks facts and a name where it ranks files.**
   `file.appeared` takes `semver(version)`, because it ranks by whatever its regex captured and no
   fixed name could reach that. `fs.list` and `fs.prune` take `name`, `semver` or `modified`,
   because those three are the whole of what ranking a directory means and a config that needs more
   has `shell.run`.
+- **`fs.unpack` is the one `fs.*` step that starts a process.** Every Linux host has a tar that
+  detects the compression itself and refuses a member whose name would escape the destination; a
+  reader of our own would be a second implementation of that, with our own bugs in it. It goes
+  through `spi/ProcessRunner` like any other command, so a test asserts on the command it built
+  rather than forking one.
 - **The `systemd` verbs that mutate a unit put `sudo` in front by default**, matching the sudoers
   allowlist of §10.2. That is separate from `run_as:`, which says which user to become rather than
   that root is required; `sudo: false` turns it off for a user unit.

@@ -8,7 +8,10 @@ import net.ryanh.butler.util.Literals;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -70,7 +73,7 @@ public final class PruneStep implements StepType<PruneStep.Config> {
         }
         Split split = split(c);
         for (String name : split.deleted()) {
-            delete(c.dir().resolve(name));
+            Fs.delete(c.dir().resolve(name));
         }
         StepResult result = StepResult.ok()
                 .output("deleted", split.deleted())
@@ -141,18 +144,6 @@ public final class PruneStep implements StepType<PruneStep.Config> {
 
     private static Path absolute(Path path) {
         return path.toAbsolutePath().normalize();
-    }
-
-    private static void delete(Path path) throws IOException {
-        if (!Files.isDirectory(path) || Files.isSymbolicLink(path)) {
-            Files.deleteIfExists(path);
-            return;
-        }
-        try (Stream<Path> tree = Files.walk(path)) {
-            for (Path p : tree.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(p);
-            }
-        }
     }
 
     @Override

@@ -104,6 +104,7 @@ jobs:
         target: ${steps.symlink.previous_target}
         atomic: true
         when: exists(steps.symlink.previous_target)
+        register: rollback
 
       - uses: systemd.restart
         unit: api.service
@@ -116,4 +117,4 @@ jobs:
       to: ops
       on: [ success, failure ]
       success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
-      failure: ":fire: api ${trigger.version} FAILED at step ${run.failed_step}"
+      failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}, rollback ${steps.rollback.status}"

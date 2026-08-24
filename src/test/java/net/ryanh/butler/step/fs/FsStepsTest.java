@@ -3,6 +3,7 @@ package net.ryanh.butler.step.fs;
 import net.ryanh.butler.config.ConfigLoader;
 import net.ryanh.butler.runtime.*;
 import net.ryanh.butler.spi.Event;
+import net.ryanh.butler.testing.FakeProcessRunner;
 import net.ryanh.butler.testing.Fixture;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -10,7 +11,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.util.List;
@@ -49,6 +52,16 @@ class FsStepsTest {
     private Run run(String steps) {
         ConfigLoader.Result result = config(steps);
         return new JobRunner(Fixture.environment(result, StepRegistry.discover(), stateDir))
+                .run(result.config().jobs().get("j"), new Event("manual", Map.of(), null));
+    }
+
+    /**
+     * A run whose process runner the test keeps, for a step that builds a command.
+     */
+    private Run run(String steps, FakeProcessRunner processes) {
+        ConfigLoader.Result result = config(steps);
+        return new JobRunner(
+                Fixture.environment(result, StepRegistry.discover(), stateDir, processes))
                 .run(result.config().jobs().get("j"), new Event("manual", Map.of(), null));
     }
 
@@ -515,6 +528,345 @@ class FsStepsTest {
             assertEquals(List.of("would delete " + at("releases/1.0.0"),
                     "      keeping the newest 2 of 3"), body);
             assertTrue(Files.isDirectory(dir.resolve("releases/1.0.0")), "a plan deletes nothing");
+        }
+    }
+
+    /**
+     * Every path a test here deletes is under {@code @TempDir}. The two guards that refuse a path
+     * outside it are asserted through the <em>plan</em> only: a plan calls {@code describe()} and
+     * never {@code execute()}, so a test of the guard cannot itself delete anything if the guard
+     * ever breaks. Do not turn those two into run tests.
+     */
+    @Nested
+    @DisplayName("delete")
+    class Delete {
+
+        @Test
+        @DisplayName("deletes a file and reports that it went")
+        void deletesAFile() throws IOException {
+            write("junk.txt", "x");
+            Run run = run("""
+                          - uses: fs.delete
+                            path: %s
+                            register: gone
+                    """.formatted(at("junk.txt")));
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+            assertFalse(Files.exists(dir.resolve("junk.txt")));
+        }
+
+        @Test
+        @DisplayName("deleting what is not there succeeds, because cleanup runs after work that "
+                + "may not have got that far")
+        void missingIsNotAFailure() {
+            Run run = run("""
+                          - uses: fs.delete
+                            path: %s
+                    """.formatted(at("never-existed.txt")));
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+            assertEquals("nothing to delete: " + at("never-existed.txt"),
+                    run.steps().getFirst().message());
+        }
+
+        @Test
+        @DisplayName("a directory with things in it needs recursive, and until then nothing goes")
+        void refusesANonEmptyDirectory() throws IOException {
+            write("staging/a.txt", "a");
+            write("staging/deeper/b.txt", "b");
+
+            Run run = run("""
+                          - uses: fs.delete
+                            path: %s
+                    """.formatted(at("staging")));
+
+            assertEquals(Run.Status.FAILED, run.status());
+            assertTrue(run.steps().getFirst().message().contains("set recursive: true"),
+                    run.steps().getFirst().message());
+            assertTrue(Files.exists(dir.resolve("staging/a.txt")), "and it deleted nothing");
+            assertTrue(Files.exists(dir.resolve("staging/deeper/b.txt")));
+        }
+
+        @Test
+        @DisplayName("an empty directory goes without asking for recursive")
+        void deletesAnEmptyDirectory() throws IOException {
+            Files.createDirectories(dir.resolve("empty"));
+            assertEquals(Run.Status.SUCCESS, run("""
+                          - uses: fs.delete
+                            path: %s
+                    """.formatted(at("empty"))).status());
+
+            assertFalse(Files.exists(dir.resolve("empty")));
+        }
+
+        @Test
+        @DisplayName("recursive takes the tree")
+        void deletesATreeWhenAsked() throws IOException {
+            write("staging/a.txt", "a");
+            write("staging/deeper/b.txt", "b");
+
+            assertEquals(Run.Status.SUCCESS, run("""
+                          - uses: fs.delete
+                            path: %s
+                            recursive: true
+                    """.formatted(at("staging"))).status());
+
+            assertFalse(Files.exists(dir.resolve("staging")));
+        }
+
+        @Test
+        @DisplayName("a symlink is removed as the link it is, and its target stays")
+        void deletesTheLinkNotTheTarget() throws IOException {
+            assumeSymlinks();
+            write("releases/1.2.3/api.jar", "jar");
+            Files.createSymbolicLink(dir.resolve("current"), dir.resolve("releases/1.2.3"));
+
+            assertEquals(Run.Status.SUCCESS, run("""
+                          - uses: fs.delete
+                            path: %s
+                    """.formatted(at("current"))).status());
+
+            assertFalse(Files.exists(dir.resolve("current"), LinkOption.NOFOLLOW_LINKS));
+            assertEquals("jar", Files.readString(dir.resolve("releases/1.2.3/api.jar")),
+                    "what the link pointed at must survive");
+        }
+
+        @Test
+        @DisplayName("the plan counts what a recursive delete would take")
+        void describesTheTree() throws IOException {
+            write("staging/a.txt", "a");
+            write("staging/deeper/b.txt", "b");
+
+            List<String> body = plan("""
+                          - uses: fs.delete
+                            path: %s
+                            recursive: true
+                    """.formatted(at("staging"))).steps().getFirst().body();
+
+            assertEquals("would delete " + at("staging"), body.get(0));
+            assertEquals("      a directory holding 3 entries", body.get(1));
+        }
+
+        @Test
+        @DisplayName("the plan says so when there is nothing there")
+        void describesNothingToDo() {
+            assertEquals(List.of("would delete nothing: there is no " + at("gone.txt")),
+                    plan("""
+                                  - uses: fs.delete
+                                    path: %s
+                            """.formatted(at("gone.txt"))).steps().getFirst().body());
+        }
+
+        @Test
+        @DisplayName("the root of a filesystem is refused, which an unset var resolves to")
+        void refusesTheRoot() {
+            // A plan, deliberately: describe() cannot delete, so this is safe to assert whatever
+            // the guard does. See the note on this class.
+            List<String> body = plan("""
+                          - uses: fs.delete
+                            path: /
+                            recursive: true
+                    """).steps().getFirst().body();
+
+            assertEquals(1, body.size(), body.toString());
+            assertTrue(body.getFirst().startsWith("would fail: refusing to delete the root"),
+                    body.getFirst());
+        }
+
+        @Test
+        @DisplayName("an empty path is refused rather than read as the working directory")
+        void refusesAnEmptyPath() {
+            // A plan, deliberately, for the same reason.
+            assertEquals(List.of("would fail: fs.delete needs a path:"),
+                    plan("""
+                                  - uses: fs.delete
+                                    path: ""
+                                    recursive: true
+                            """).steps().getFirst().body());
+        }
+    }
+
+    @Nested
+    @DisplayName("unpack")
+    class Unpack {
+
+        @Test
+        @DisplayName("builds the tar command, and makes the directory to unpack into")
+        void unpacks() throws IOException {
+            write("api-1.2.3.tar.gz", "not really a tarball, tar is faked here");
+            FakeProcessRunner processes = new FakeProcessRunner();
+
+            Run run = run("""
+                          - uses: fs.unpack
+                            from: %s
+                            to: %s
+                            strip_components: 1
+                    """.formatted(at("api-1.2.3.tar.gz"), at("releases/1.2.3")), processes);
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+            assertTrue(Files.isDirectory(dir.resolve("releases/1.2.3")),
+                    "mkdirs: the destination is made before tar is asked to write into it");
+            assertEquals(List.of("tar", "--no-same-owner", "--strip-components=1",
+                            "-x", "-f", dir.resolve("api-1.2.3.tar.gz").toString(),
+                            "-C", dir.resolve("releases/1.2.3").toString()),
+                    processes.last().argv());
+        }
+
+        @Test
+        @DisplayName("no strip_components leaves the flag off")
+        void leavesStripOffWhenNotAsked() throws IOException {
+            write("api.tar", "x");
+            FakeProcessRunner processes = new FakeProcessRunner();
+            run("""
+                          - uses: fs.unpack
+                            from: %s
+                            to: %s
+                    """.formatted(at("api.tar"), at("out")), processes);
+
+            assertFalse(processes.last().argv().stream()
+                            .anyMatch(a -> a.startsWith("--strip-components")),
+                    processes.last().display());
+        }
+
+        @Test
+        @DisplayName("tar failing fails the step, with what tar said")
+        void tarFailureFailsTheStep() throws IOException {
+            write("broken.tar", "x");
+            FakeProcessRunner processes =
+                    new FakeProcessRunner().replying(2, "", "tar: This does not look like a tar archive");
+
+            Run run = run("""
+                          - uses: fs.unpack
+                            from: %s
+                            to: %s
+                    """.formatted(at("broken.tar"), at("out")), processes);
+
+            assertEquals(Run.Status.FAILED, run.status());
+            assertTrue(run.steps().getFirst().message().contains("does not look like a tar archive"),
+                    run.steps().getFirst().message());
+        }
+
+        @Test
+        @DisplayName("the plan shows the command it would run")
+        void describesTheCommand() throws IOException {
+            write("api.tar", "x");
+            List<String> body = plan("""
+                          - uses: fs.unpack
+                            from: %s
+                            to: %s
+                            strip_components: 2
+                    """.formatted(at("api.tar"), at("out"))).steps().getFirst().body();
+
+            assertEquals("would unpack " + at("api.tar"), body.get(0));
+            assertEquals("      into   " + at("out"), body.get(1));
+            assertEquals("      dropping 2 leading path elements, creating the directory",
+                    body.get(2));
+            assertEquals("      tar --no-same-owner --strip-components=2 -x -f " + at("api.tar")
+                            + " -C " + at("out"), body.get(3),
+                    "the command reads with the paths the config wrote, like the lines above it");
+        }
+
+        @Test
+        @DisplayName("preflight warns about an archive that is not there")
+        void preflightWarnsOnMissingArchive() {
+            assertEquals(List.of("archive does not exist: " + at("nope.tar")),
+                    plan("""
+                                  - uses: fs.unpack
+                                    from: %s
+                                    to: %s
+                            """.formatted(at("nope.tar"), at("out")))
+                            .steps().getFirst().warnings());
+        }
+    }
+
+    @Nested
+    @DisplayName("owner and group")
+    class Ownership {
+
+        /**
+         * The current user, which is the one name a test can set an owner to without being root:
+         * POSIX permits the owner to set the owner it already has.
+         */
+        private String self() {
+            return System.getProperty("user.name");
+        }
+
+        @Test
+        @DisplayName("a copy takes the owner it is given, or leaves it alone off POSIX")
+        void copyAppliesOwnership() throws IOException {
+            write("from.jar", "jar");
+            Run run = run("""
+                          - uses: fs.copy
+                            from: %s
+                            to: %s
+                            mode: "0640"
+                            owner: %s
+                    """.formatted(at("from.jar"), at("to.jar"), self()));
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+            assertTrue(Files.exists(dir.resolve("to.jar")));
+        }
+
+        @Test
+        @DisplayName("a name the host does not know fails the step rather than leaving a file "
+                + "nobody asked for")
+        void unknownOwnerFailsTheStep() throws IOException {
+            assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                    "ownership is not a concept on this filesystem");
+            write("from.jar", "jar");
+
+            Run run = run("""
+                          - uses: fs.copy
+                            from: %s
+                            to: %s
+                            owner: nosuchuser-butler
+                    """.formatted(at("from.jar"), at("to.jar")));
+
+            assertEquals(Run.Status.FAILED, run.status());
+            assertTrue(run.steps().getFirst().message().contains("no such user or group"),
+                    run.steps().getFirst().message());
+        }
+
+        @Test
+        @DisplayName("the plan says whose the file will be")
+        void describesOwnership() throws IOException {
+            write("from.jar", "jar");
+            List<String> body = plan("""
+                          - uses: fs.copy
+                            from: %s
+                            to: %s
+                            mode: "0640"
+                            owner: app
+                            group: staff
+                    """.formatted(at("from.jar"), at("to.jar"))).steps().getFirst().body();
+
+            assertEquals("      mode 0640, owner app:staff", body.get(2));
+        }
+
+        @Test
+        @DisplayName("group alone reads as a group, not as an owner")
+        void describesGroupAlone() {
+            List<String> body = plan("""
+                          - uses: fs.mkdir
+                            path: %s
+                            group: staff
+                    """.formatted(at("releases"))).steps().getFirst().body();
+
+            assertEquals("      group staff", body.getLast());
+        }
+
+        @Test
+        @DisplayName("preflight names an owner this host has never heard of")
+        void preflightWarnsOnUnknownOwner() {
+            assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                    "ownership is not a concept on this filesystem");
+
+            assertEquals(List.of("no such user on this host: nosuchuser-butler"),
+                    plan("""
+                                  - uses: fs.mkdir
+                                    path: %s
+                                    owner: nosuchuser-butler
+                            """.formatted(at("releases"))).steps().getFirst().warnings());
         }
     }
 }

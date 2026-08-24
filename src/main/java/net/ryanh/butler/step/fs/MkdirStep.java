@@ -16,7 +16,8 @@ import java.util.List;
  */
 public final class MkdirStep implements StepType<MkdirStep.Config> {
 
-    public record Config(Path path, String mode, Boolean parents) {
+    public record Config(Path path, String mode, String owner, String group,
+                         Boolean parents) {
         public Config {
             parents = parents == null || parents;
         }
@@ -59,6 +60,7 @@ public final class MkdirStep implements StepType<MkdirStep.Config> {
             Files.createDirectory(c.path());
         }
         Fs.applyMode(c.path(), c.mode());
+        Fs.applyOwnership(c.path(), c.owner(), c.group());
         return StepResult.ok()
                 .output("path", Literals.path(c.path()))
                 .output("created", !existed);
@@ -78,8 +80,12 @@ public final class MkdirStep implements StepType<MkdirStep.Config> {
         if (c.parents() && missing > 0) {
             lines.add("      along with " + Fs.parents(missing));
         }
-        if (c.mode() != null && !c.mode().isBlank()) {
+        if (Fs.named(c.mode())) {
             lines.add("      mode " + c.mode());
+        }
+        String ownership = Fs.ownership(c.owner(), c.group());
+        if (ownership != null) {
+            lines.add("      " + ownership);
         }
         return String.join("\n", lines);
     }
@@ -97,6 +103,7 @@ public final class MkdirStep implements StepType<MkdirStep.Config> {
             warnings.add("the directory above it does not exist and parents is false: "
                     + Literals.path(c.path()));
         }
+        warnings.addAll(Fs.ownershipChecks(c.owner(), c.group()));
         return List.copyOf(warnings);
     }
 }

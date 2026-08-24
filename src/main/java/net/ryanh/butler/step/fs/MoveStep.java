@@ -17,7 +17,8 @@ import java.util.List;
  */
 public final class MoveStep implements StepType<MoveStep.Config> {
 
-    public record Config(Path from, Path to, String mode, boolean mkdirs, Boolean overwrite) {
+    public record Config(Path from, Path to, String mode, String owner, String group,
+                         boolean mkdirs, Boolean overwrite) {
         public Config {
             overwrite = overwrite == null || overwrite;
         }
@@ -63,6 +64,7 @@ public final class MoveStep implements StepType<MoveStep.Config> {
                     + Literals.path(c.to()));
         }
         Fs.applyMode(c.to(), c.mode());
+        Fs.applyOwnership(c.to(), c.owner(), c.group());
         return StepResult.ok().output("path", Literals.path(c.to()));
     }
 
@@ -97,7 +99,11 @@ public final class MoveStep implements StepType<MoveStep.Config> {
 
     @Override
     public List<String> preflight(Config c, RunContext ctx) {
-        return c.from() == null || c.to() == null ? List.of()
-                : Fs.transferChecks(c.from(), c.to(), c.mkdirs());
+        if (c.from() == null || c.to() == null) {
+            return List.of();
+        }
+        List<String> warnings = new ArrayList<>(Fs.transferChecks(c.from(), c.to(), c.mkdirs()));
+        warnings.addAll(Fs.ownershipChecks(c.owner(), c.group()));
+        return List.copyOf(warnings);
     }
 }
