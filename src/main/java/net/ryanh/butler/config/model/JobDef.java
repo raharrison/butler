@@ -25,6 +25,8 @@ public record JobDef(
         List<StepDef> onSuccess,
         List<StepDef> always,
         Map<String, String> persist,
+        /* Only the fields the job set; ButlerConfig.retentionFor fills the rest. */
+        ButlerConfig.RunRetention runRetention,
         /* Reads "notify" in YAML; a record component cannot be named after Object.notify(). */
         NotifyDef notifyPolicy,
         String path) {

@@ -38,12 +38,20 @@ class RunRecorderTest {
     @TempDir
     Path stateDir;
 
-    private RunRecorder recorder(ButlerConfig.RunRetention retention) {
-        return RunRecorder.at(stateDir, retention);
+    private RunRecorder recorder() {
+        return RunRecorder.at(stateDir);
+    }
+
+    private static ButlerConfig.RunRetention keep(int count) {
+        return new ButlerConfig.RunRetention(count, Duration.ofDays(3650));
     }
 
     private static Run run(Instant started, Run.Status status) {
-        return new Run(RUN_ID.format(started) + "-a1b2", "api", "file.appeared",
+        return run("api", started, status);
+    }
+
+    private static Run run(String job, Instant started, Run.Status status) {
+        return new Run(RUN_ID.format(started) + "-a1b2", job, "file.appeared",
                 Map.of("version", "1.2.4"), status, started, Duration.ofSeconds(12),
                 List.of(new Plan.Entry("discover", 1, "Ask the service", "http.request",
                         List.of("state.deployed_version = \"1.2.3\""), List.of(), null, null)),
@@ -69,9 +77,15 @@ class RunRecorderTest {
     /**
      * Each {@code record} prunes before it returns, so what is on disk afterwards is settled.
      */
-    private static void write(RunRecorder recorder, Instant... at) {
+    private static void write(RunRecorder recorder, ButlerConfig.RunRetention retention,
+                              Instant... at) {
+        write(recorder, "api", retention, at);
+    }
+
+    private static void write(RunRecorder recorder, String job,
+                              ButlerConfig.RunRetention retention, Instant... at) {
         for (Instant when : at) {
-            recorder.record(run(when, Run.Status.SUCCESS));
+            recorder.record(run(job, when, Run.Status.SUCCESS), retention);
         }
     }
 
@@ -80,10 +94,11 @@ class RunRecorderTest {
     void theRecordIsTheWholeRun() throws IOException {
         Instant started = Instant.parse("2026-08-09T03:14:07Z");
         Run run = run(started, Run.Status.SUCCESS);
-        recorder(KEEP_EVERYTHING).record(run);
+        recorder().record(run, KEEP_EVERYTHING);
 
-        Path file = stateDir.resolve("runs/2026-08-09/20260809T031407-a1b2.json");
-        assertTrue(Files.exists(file), "a record lands under its own date: " + records());
+        Path file = stateDir.resolve("runs/2026-08-09/api-20260809T031407-a1b2.json");
+        assertTrue(Files.exists(file),
+                "a record lands under its own date, named for its job: " + records());
 
         String json = Files.readString(file);
         assertTrue(json.contains("\"status\" : \"success\""), json);
@@ -101,7 +116,7 @@ class RunRecorderTest {
     @Test
     @DisplayName("the index carries one line per run, for history without walking the tree")
     void indexIsOneLinePerRun() throws IOException {
-        write(recorder(KEEP_EVERYTHING),
+        write(recorder(), KEEP_EVERYTHING,
                 Instant.parse("2026-08-09T03:14:07Z"), Instant.parse("2026-08-10T09:00:00Z"));
 
         List<String> lines = index();
@@ -116,14 +131,13 @@ class RunRecorderTest {
     @DisplayName("retention by count keeps the newest and drops the rest")
     void prunesByCount() throws IOException {
         Instant base = Instant.parse("2026-08-09T00:00:00Z");
-        RunRecorder recorder = recorder(new ButlerConfig.RunRetention(2, Duration.ofDays(3650)));
-        write(recorder, base, base.plusSeconds(60), base.plusSeconds(120), base.plusSeconds(180),
-                base.plusSeconds(240));
-
-        recorder.prune();
+        RunRecorder recorder = recorder();
+        write(recorder, keep(2), base, base.plusSeconds(60), base.plusSeconds(120),
+                base.plusSeconds(180), base.plusSeconds(240));
 
         List<String> kept = records().stream().map(p -> p.getFileName().toString()).toList();
-        assertEquals(List.of("20260809T000300-a1b2.json", "20260809T000400-a1b2.json"), kept);
+        assertEquals(List.of("api-20260809T000300-a1b2.json", "api-20260809T000400-a1b2.json"),
+                kept);
         assertEquals(2, index().size(), "the index is pruned to match: " + index());
     }
 
@@ -131,16 +145,13 @@ class RunRecorderTest {
     @DisplayName("retention by age drops the old without touching the newest")
     void prunesByAge() throws IOException {
         Instant now = Instant.now();
-        RunRecorder recorder =
-                recorder(new ButlerConfig.RunRetention(10_000, Duration.ofDays(30)));
-        write(recorder, now.minus(Duration.ofDays(40)), now.minus(Duration.ofDays(10)), now);
-
-        recorder.prune();
+        write(recorder(), new ButlerConfig.RunRetention(10_000, Duration.ofDays(30)),
+                now.minus(Duration.ofDays(40)), now.minus(Duration.ofDays(10)), now);
 
         List<Path> kept = records();
         assertEquals(2, kept.size(), kept.toString());
         assertTrue(kept.stream().anyMatch(p -> p.getFileName().toString()
-                .startsWith(RUN_ID.format(now))), "the newest survives: " + kept);
+                .startsWith("api-" + RUN_ID.format(now))), "the newest survives: " + kept);
         assertEquals(2, index().size());
     }
 
@@ -148,10 +159,7 @@ class RunRecorderTest {
     @DisplayName("an emptied date directory is tidied away")
     void emptyDaysGo() throws IOException {
         Instant base = Instant.parse("2026-08-09T00:00:00Z");
-        RunRecorder recorder = recorder(new ButlerConfig.RunRetention(1, Duration.ofDays(3650)));
-        write(recorder, base, base.plus(Duration.ofDays(1)));
-
-        recorder.prune();
+        write(recorder(), keep(1), base, base.plus(Duration.ofDays(1)));
 
         assertFalse(Files.exists(stateDir.resolve("runs/2026-08-09")));
         assertTrue(Files.exists(stateDir.resolve("runs/2026-08-10")));
@@ -160,7 +168,7 @@ class RunRecorderTest {
     @Test
     @DisplayName("pruning an empty state directory is a no-op rather than a failure")
     void nothingToPrune() {
-        assertDoesNotThrow(() -> recorder(KEEP_EVERYTHING).prune());
+        assertDoesNotThrow(() -> recorder().prune("api", KEEP_EVERYTHING));
     }
 
     @Test
@@ -170,7 +178,71 @@ class RunRecorderTest {
         Files.createDirectories(stateDir);
         Files.writeString(stateDir.resolve("runs"), "not a directory");
 
-        assertDoesNotThrow(() -> recorder(KEEP_EVERYTHING)
-                .record(run(Instant.now(), Run.Status.SUCCESS)));
+        assertDoesNotThrow(() -> recorder()
+                .record(run(Instant.now(), Run.Status.SUCCESS), KEEP_EVERYTHING));
+    }
+
+    @Test
+    @DisplayName("a record deleted by hand loses its index line at the next prune")
+    void theIndexHealsItself() throws IOException {
+        Instant base = Instant.parse("2026-08-09T00:00:00Z");
+        RunRecorder recorder = recorder();
+        write(recorder, KEEP_EVERYTHING, base, base.plusSeconds(60));
+
+        Files.delete(stateDir.resolve("runs/2026-08-09/api-20260809T000000-a1b2.json"));
+        recorder.prune("api", KEEP_EVERYTHING);
+
+        assertEquals(1, index().size(), index().toString());
+        assertTrue(index().getFirst().contains("20260809T000100-a1b2"), index().toString());
+    }
+
+    @Test
+    @DisplayName("an index line that will not parse is left alone")
+    void unparseableIndexLinesSurvive() throws IOException {
+        Instant base = Instant.parse("2026-08-09T00:00:00Z");
+        RunRecorder recorder = recorder();
+        write(recorder, keep(1), base, base.plusSeconds(60));
+
+        Path index = stateDir.resolve("runs/index.jsonl");
+        Files.writeString(index, "not json at all\n" + Files.readString(index));
+        recorder.prune("api", keep(1));
+
+        assertEquals("not json at all", index().getFirst(), index().toString());
+    }
+
+    @Test
+    @DisplayName("one job's name being another's prefix does not mix their records")
+    void jobNamesThatSharePrefixes() throws IOException {
+        Instant base = Instant.parse("2026-08-09T00:00:00Z");
+        RunRecorder recorder = recorder();
+
+        write(recorder, "api-v2", keep(10), base, base.plusSeconds(60));
+        write(recorder, "api", keep(1), base.plusSeconds(10), base.plusSeconds(20));
+
+        List<String> kept = records().stream().map(p -> p.getFileName().toString()).toList();
+        assertEquals(List.of(
+                        "api-20260809T000020-a1b2.json",
+                        "api-v2-20260809T000000-a1b2.json",
+                        "api-v2-20260809T000100-a1b2.json"), kept,
+                "pruning api to one record must not touch api-v2");
+        assertEquals(3, index().size(), index().toString());
+    }
+
+    @Test
+    @DisplayName("a noisy job cannot push a quiet one's history out")
+    void retentionIsPerJob() throws IOException {
+        Instant base = Instant.parse("2026-08-09T00:00:00Z");
+        RunRecorder recorder = recorder();
+
+        write(recorder, "deploy", keep(10), base, base.plusSeconds(60));
+        write(recorder, "heartbeat", keep(1),
+                base.plusSeconds(10), base.plusSeconds(20), base.plusSeconds(30));
+
+        List<String> kept = records().stream().map(p -> p.getFileName().toString()).toList();
+        assertEquals(List.of(
+                "deploy-20260809T000000-a1b2.json",
+                "deploy-20260809T000100-a1b2.json",
+                "heartbeat-20260809T000030-a1b2.json"), kept);
+        assertEquals(3, index().size(), "and the index keeps their lines too: " + index());
     }
 }

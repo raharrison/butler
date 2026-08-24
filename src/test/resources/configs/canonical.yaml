@@ -13,7 +13,7 @@ settings:
 
 secrets:
   from_env: true
-  file: /etc/butler/secrets.yaml
+  files: /etc/butler/secrets.yaml
 
 vars:
   releases_root: /srv/apps
@@ -43,6 +43,8 @@ jobs:
       queue_newest_only: true
 
     timeout: 10m
+
+    run_retention: { age: 90d }
 
     discover:
       - name: Ask the running service what it is

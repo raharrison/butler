@@ -17,14 +17,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The {@link RunContext} implementation: the eight namespaces of DESIGN.md §2.2, plus the three
- * things a run adds as it goes, being results registered by {@code register:}, variables written by
- * steps, and values observed by {@code discover:}. Everything else is fixed once it is built.
+ * The {@link RunContext} implementation: the namespaces of DESIGN.md §2.2, plus what a run adds
+ * as it goes - registered results, vars a step wrote, values {@code discover:} observed.
  *
- * <p>A step sees a view of the context rather than this object: one carrying its process settings
- * ({@link #forStep}), and inside a condition possibly one carrying step-injected locals
- * ({@link #withLocals}). Views share the namespaces with the run, so a result registered through
- * one is visible through all of them.
+ * <p>A step sees a view of this rather than the object: {@link #forStep} carries its process
+ * settings, {@link #withLocals} its injected locals. Views share the namespaces, so a result
+ * registered through one is visible through all.
  */
 public final class Context implements RunContext {
 
@@ -237,9 +235,6 @@ public final class Context implements RunContext {
         steps.put(name, result.asContext());
     }
 
-    /**
-     * Merges what a step wrote into {@code vars.*}.
-     */
     public void applyVars(Map<String, Object> values) {
         vars.putAll(values);
     }

@@ -8,8 +8,7 @@ import java.util.*;
  * <p>A validator that throws on the first error makes fixing a config an iterative game of
  * whack-a-mole, so nothing here throws.
  *
- * <p>Each problem records the file it is in. The file being read answers lookups while it is
- * being read; after {@link #merged}, a path is looked up across every file.
+ * <p>Each problem records the file it is in, since a config may span several.
  */
 public final class Diagnostics {
 

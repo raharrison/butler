@@ -24,12 +24,9 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 /**
- * The audit trail: one JSON document per run under {@code <state_dir>/runs/<date>/}, plus an
- * append-only {@code runs/index.jsonl} so history can be answered without walking the tree
- * (DESIGN.md §6.4).
- *
- * <p>Failing to write one never fails a run: the work was done, and losing the note about it is
- * worth a log line and no more.
+ * The audit trail: one JSON document per run at {@code <state_dir>/runs/<date>/<job>-<id>.json},
+ * plus an append-only {@code runs/index.jsonl} so history can be answered without walking the
+ * tree (DESIGN.md §6.4).
  */
 public final class RunRecorder {
 
@@ -50,25 +47,30 @@ public final class RunRecorder {
     private static final Pattern DAY_DIR = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
 
     /**
+     * What follows the job in a record's name. Checked, so that pruning {@code api} cannot reach
+     * {@code api-v2}'s records.
+     */
+    private static final Pattern RECORD = Pattern.compile("\\d{8}T\\d{6}-[0-9a-f]{4}\\.json");
+
+    /**
      * The timestamp half of a run id, which dates a record without opening it.
      */
     private static final DateTimeFormatter RUN_ID =
             DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss", Locale.ROOT);
 
     private final Path runsDir;
-    private final ButlerConfig.RunRetention retention;
 
-    private RunRecorder(Path runsDir, ButlerConfig.RunRetention retention) {
+    private RunRecorder(Path runsDir) {
         this.runsDir = runsDir;
-        this.retention = retention;
     }
 
-    public static RunRecorder at(Path stateDir, ButlerConfig.RunRetention retention) {
-        return new RunRecorder(stateDir.resolve("runs"), retention);
+    public static RunRecorder at(Path stateDir) {
+        return new RunRecorder(stateDir.resolve("runs"));
     }
 
     public Path fileFor(Run run) {
-        return runsDir.resolve(DAY.format(run.startedAt())).resolve(run.id() + ".json");
+        return runsDir.resolve(DAY.format(run.startedAt()))
+                .resolve(run.job() + "-" + run.id() + ".json");
     }
 
     public Path index() {
@@ -76,17 +78,11 @@ public final class RunRecorder {
     }
 
     /**
-     * Writes the record and its index line, then enforces retention.
-     *
-     * <p>Retention runs on the caller's thread. It is a directory listing and a few deletions -
-     * tens of milliseconds against a job measured in seconds - and handing it to a thread nobody
-     * waits for bought that back at the cost of never running at all under {@code butler trigger},
-     * where the process exits before a daemon thread gets there.
-     *
-     * <p>Failing at either never fails the run that produced it: the work was done, and losing the
-     * note about it is worth a log line and no more.
+     * Neither failure ever fails the run that produced it. Pruning is on the caller's thread: a
+     * thread nobody waits for never runs under {@code butler trigger}, where the process exits
+     * first.
      */
-    public void record(Run run) {
+    public void record(Run run, ButlerConfig.RunRetention retention) {
         try {
             write(run);
         } catch (IOException | RuntimeException e) {
@@ -94,27 +90,27 @@ public final class RunRecorder {
             return;
         }
         try {
-            prune();
+            prune(run.job(), retention);
         } catch (RuntimeException e) {
             log.error("could not apply run retention: {}", e.toString());
         }
     }
 
     /**
-     * Newest {@code count} records kept, anything older than {@code age} dropped whether or not the
-     * count allows it. Synchronized with {@link #record} because both touch the index.
+     * Newest {@code count} of this job's records kept, anything older than {@code age} dropped;
+     * other jobs untouched. Synchronized with {@link #record}: both touch the index.
      */
-    public synchronized void prune() {
-        List<Path> records = records();
+    public synchronized void prune(String job, ButlerConfig.RunRetention retention) {
+        List<Path> records = records(job);
         Instant cutoff = retention.age() == null ? null : Instant.now().minus(retention.age());
 
         Set<String> kept = new LinkedHashSet<>();
         for (int i = 0; i < records.size(); i++) {
             Path file = records.get(i);
-            String id = idOf(file);
+            String id = idOf(file, job);
             Instant started = startedAt(id);
-            boolean tooMany = i >= retention.count();
-            // A null started_at is a name this build did not write; keep what cannot be dated.
+            boolean tooMany = retention.count() != null && i >= retention.count();
+            // A name this build did not write cannot be dated; keep it rather than guess.
             boolean tooOld = cutoff != null && started != null && started.isBefore(cutoff);
             if (tooMany || tooOld) {
                 delete(file);
@@ -123,7 +119,7 @@ public final class RunRecorder {
             }
         }
         pruneEmptyDays();
-        rewriteIndex(kept);
+        reindex(job, kept);
     }
 
     // --------------------------------------------------------------------------- writing
@@ -197,26 +193,37 @@ public final class RunRecorder {
     // --------------------------------------------------------------------------- retention
 
     /**
-     * Every record on disk, newest first. A run id sorts as its timestamp does, so the order falls
-     * out of the names without opening a file.
+     * One job's records, newest first: a run id sorts as its timestamp does.
      */
-    private List<Path> records() {
+    private List<Path> records(String job) {
         if (!Files.isDirectory(runsDir)) {
             return List.of();
         }
         List<Path> found = new ArrayList<>();
+        // Matched rather than globbed: a job name is a config key, not a glob.
+        String prefix = job + "-";
         try (DirectoryStream<Path> days = Files.newDirectoryStream(runsDir, RunRecorder::isDay)) {
             for (Path day : days) {
                 try (DirectoryStream<Path> files = Files.newDirectoryStream(day, "*.json")) {
-                    files.forEach(found::add);
+                    files.forEach(file -> {
+                        if (isRecordOf(file, prefix)) {
+                            found.add(file);
+                        }
+                    });
                 }
             }
         } catch (IOException e) {
             log.error("could not list run records under {}: {}", runsDir, e.toString());
             return List.of();
         }
-        found.sort(Comparator.comparing(RunRecorder::idOf).reversed());
+        found.sort(Comparator.comparing((Path p) -> p.getFileName().toString()).reversed());
         return found;
+    }
+
+    private static boolean isRecordOf(Path file, String prefix) {
+        String name = file.getFileName().toString();
+        return name.startsWith(prefix)
+                && RECORD.matcher(name.substring(prefix.length())).matches();
     }
 
     private static boolean isDay(Path path) {
@@ -239,10 +246,9 @@ public final class RunRecorder {
     }
 
     /**
-     * Rewrites the index to the records that survived, so a reader never sees a line pointing at a
-     * record that has been deleted.
+     * Drops this job's lines for records no longer on disk. Only this job's: the index is shared.
      */
-    private void rewriteIndex(Set<String> kept) {
+    private void reindex(String job, Set<String> kept) {
         Path index = index();
         if (!Files.isReadable(index)) {
             return;
@@ -250,7 +256,7 @@ public final class RunRecorder {
         try {
             List<String> lines = Files.readAllLines(index, StandardCharsets.UTF_8);
             List<String> survivors = lines.stream()
-                    .filter(line -> kept.contains(idIn(line)))
+                    .filter(line -> !isGone(line, job, kept))
                     .toList();
             if (survivors.size() == lines.size()) {
                 return;
@@ -270,27 +276,28 @@ public final class RunRecorder {
         }
     }
 
-    private static String idOf(Path record) {
+    /**
+     * Split by the known job name, since a job name may itself contain a hyphen.
+     */
+    private static String idOf(Path record, String job) {
         String name = record.getFileName().toString();
-        return name.endsWith(".json") ? name.substring(0, name.length() - 5) : name;
+        return name.substring(job.length() + 1, name.length() - ".json".length());
     }
 
     /**
-     * @return the id in one index line, or null if the line is not a record
+     * A line that will not parse names no job, so it survives.
      */
-    private static String idIn(String line) {
+    private static boolean isGone(String line, String job, Set<String> onDisk) {
         try {
-            Object parsed = LINES.readValue(line, Map.class);
-            return parsed instanceof Map<?, ?> m && m.get("id") != null
-                    ? String.valueOf(m.get("id")) : null;
+            return LINES.readValue(line, Map.class) instanceof Map<?, ?> m
+                    && job.equals(m.get("job")) && !onDisk.contains(m.get("id"));
         } catch (RuntimeException e) {
-            return null;
+            return false;
         }
     }
 
     /**
-     * @return when the run started, read from the timestamp half of its id, or null if that is not
-     * a run id this build wrote
+     * @return the timestamp half of the id, or null if the id is not one this build wrote
      */
     private static Instant startedAt(String id) {
         int dash = id.indexOf('-');

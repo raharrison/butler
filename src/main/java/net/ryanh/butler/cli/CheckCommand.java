@@ -67,7 +67,7 @@ public final class CheckCommand implements Callable<Integer> {
         sb.append("secrets:\n");
         kv(sb, 1, "from_env", c.secrets().fromEnv());
         if (!c.secrets().files().isEmpty()) {
-            kv(sb, 1, "file", c.secrets().files());
+            kv(sb, 1, "files", c.secrets().files());
         }
 
         if (!c.vars().isEmpty()) {
@@ -85,11 +85,11 @@ public final class CheckCommand implements Callable<Integer> {
         }
 
         sb.append("jobs:\n");
-        c.jobs().forEach((name, job) -> renderJob(sb, job));
+        c.jobs().forEach((name, job) -> renderJob(sb, job, c.retentionFor(job)));
         return sb.toString();
     }
 
-    private static void renderJob(StringBuilder sb, JobDef job) {
+    private static void renderJob(StringBuilder sb, JobDef job, ButlerConfig.RunRetention keep) {
         indent(sb, 1).append(job.name()).append(":\n");
         if (job.description() != null) {
             kv(sb, 2, "description", job.description());
@@ -113,6 +113,7 @@ public final class CheckCommand implements Callable<Integer> {
         if (job.timeout() != null) {
             kv(sb, 2, "timeout", Durations.format(job.timeout()));
         }
+        kv(sb, 2, "run_retention", "count=" + keep.count() + " age=" + Durations.format(keep.age()));
         section(sb, "discover", job.discover());
         section(sb, "steps", job.steps());
         section(sb, "on_failure", job.onFailure());

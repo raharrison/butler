@@ -20,17 +20,13 @@ public interface ProcessRunner {
      * interrupted, which is how the runtime cancels a step that has run out of time.
      *
      * <p>An interrupt destroys the process tree and comes back as a {@link Completed} that
-     * {@link Completed#timedOut()} rather than as an exception, so the output the process managed
-     * to produce is still reported. The interrupt is re-asserted on the calling thread.
+     * {@link Completed#timedOut()}, so whatever the process printed is still reported.
      */
     Completed run(Command command) throws IOException;
 
     /**
-     * What to run, and the process settings the reserved step keys supply.
-     *
-     * <p>A step gets its own settings already filled in from {@link RunContext#command()} and only
-     * has to say what to execute, so {@code working_dir:}, {@code env:} and {@code run_as:} behave
-     * the same for every process-backed step.
+     * What to run, and the process settings the reserved step keys supply. A step gets its own
+     * already filled in from {@link RunContext#command()} and only says what to execute.
      *
      * @param argv       the program and its arguments, with no shell involved unless the step put
      *                   one there itself

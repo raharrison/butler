@@ -14,16 +14,13 @@ import java.time.Duration;
 import java.util.*;
 
 /**
- * Reads config files into the model, collecting every problem rather than stopping at the first.
+ * Reads one or more config files into one model, collecting every problem rather than stopping
+ * at the first.
  *
  * <p>The document is bound to a generic tree and walked with {@link Cursor} rather than bound
  * straight to records by databind. Databind throws on the first mismatch, which is the opposite
  * of what this needs; walking the tree keeps full control over unknown-key detection, paths and
  * error recovery.
- *
- * <p>A config may be split over several files, read in order and merged: {@code jobs:},
- * {@code notifiers:} and {@code vars:} accumulate, while {@code settings:} and {@code secrets:}
- * belong to a single file.
  */
 public final class ConfigLoader {
 
@@ -185,8 +182,8 @@ public final class ConfigLoader {
     // ------------------------------------------------------------------ document
 
     /**
-     * One file's contribution. {@code settings} and {@code secrets} are null unless the file
-     * declared them.
+     * One file's contribution. {@code settings} is null unless the file declared it, and
+     * {@code secrets} holds only the fields it set.
      */
     private record Part(int version,
                         ButlerConfig.Settings settings,
@@ -205,7 +202,6 @@ public final class ConfigLoader {
 
         // Asked for even when absent: asked-for keys are the "did you mean" candidates.
         boolean hasSettings = c.has("settings");
-        boolean hasSecrets = c.has("secrets");
         ButlerConfig.Settings settings = settings(c.object("settings"));
         ButlerConfig.SecretsConfig secrets = secrets(c.object("secrets"));
         Map<String, Object> vars = c.anyMap("vars");
@@ -217,8 +213,7 @@ public final class ConfigLoader {
         c.namedObjects("jobs").forEach((name, jc) -> jobs.put(name, job(name, jc)));
 
         c.rejectUnknownKeys();
-        return new Part(version, hasSettings ? settings : null, hasSecrets ? secrets : null,
-                vars, notifiers, jobs);
+        return new Part(version, hasSettings ? settings : null, secrets, vars, notifiers, jobs);
     }
 
     /**
@@ -232,10 +227,11 @@ public final class ConfigLoader {
         private final Map<String, NotifierDef> notifiers = new LinkedHashMap<>();
         private final Map<String, JobDef> jobs = new LinkedHashMap<>();
         private final Map<String, String> definedIn = new HashMap<>();
+        private final List<Path> secretFiles = new ArrayList<>();
         private int version = 1;
         private ButlerConfig.Settings settings;
         private String settingsFile;
-        private ButlerConfig.SecretsConfig secrets;
+        private Boolean fromEnv;
         private String secretsFile;
         private boolean any;
         private boolean unreadable;
@@ -258,15 +254,18 @@ public final class ConfigLoader {
                     settings = part.settings();
                     settingsFile = file;
                 } else {
-                    alreadySet("settings", settingsFile);
+                    alreadySet("/settings", "settings", settingsFile);
                 }
             }
-            if (part.secrets() != null) {
-                if (secrets == null) {
-                    secrets = part.secrets();
+            // secrets: files: accumulate like jobs do, so a file can carry its app's own secrets.
+            // from_env is a policy rather than a list, so it belongs to one file.
+            secretFiles.addAll(part.secrets().files());
+            if (part.secrets().fromEnv() != null) {
+                if (fromEnv == null) {
+                    fromEnv = part.secrets().fromEnv();
                     secretsFile = file;
                 } else {
-                    alreadySet("secrets", secretsFile);
+                    alreadySet("/secrets/from_env", "secrets: from_env", secretsFile);
                 }
             }
             part.vars().forEach((key, value) -> put(vars, "var", "/vars/" + key, key, value, file));
@@ -276,8 +275,8 @@ public final class ConfigLoader {
                     put(jobs, "job", "/jobs/" + key, key, value, file));
         }
 
-        private void alreadySet(String key, String first) {
-            diags.error("/" + key, key + ": is already set in " + name(first)
+        private void alreadySet(String path, String label, String first) {
+            diags.error(path, label + ": is already set in " + name(first)
                     + "; it configures the whole daemon, so it belongs in one file");
         }
 
@@ -306,7 +305,8 @@ public final class ConfigLoader {
             }
             return new ButlerConfig(version,
                     settings == null ? ButlerConfig.Settings.defaults() : settings,
-                    secrets == null ? ButlerConfig.SecretsConfig.defaults() : secrets,
+                    new ButlerConfig.SecretsConfig(fromEnv, secretFiles)
+                            .or(ButlerConfig.SecretsConfig.defaults()),
                     Collections.unmodifiableMap(vars),
                     Collections.unmodifiableMap(notifiers),
                     Collections.unmodifiableMap(jobs));
@@ -321,11 +321,8 @@ public final class ConfigLoader {
         Duration poll = c.duration("poll_interval", d.pollInterval());
         Duration grace = c.duration("shutdown_grace", d.shutdownGrace());
 
-        Cursor rc = c.object("run_retention");
-        ButlerConfig.RunRetention retention = new ButlerConfig.RunRetention(
-                rc.integer("count", d.runRetention().count()),
-                rc.duration("age", d.runRetention().age()));
-        rc.rejectUnknownKeys();
+        ButlerConfig.RunRetention retention =
+                runRetention(c.object("run_retention")).or(d.runRetention());
 
         Path plugins = c.path("plugins_dir", null);
         c.rejectUnknownKeys();
@@ -333,10 +330,6 @@ public final class ConfigLoader {
         if (maxRuns < 1) {
             c.diagnostics().error("/settings/max_concurrent_runs",
                     "must be at least 1, found " + maxRuns);
-        }
-        if (retention.count() < 0) {
-            c.diagnostics().error("/settings/run_retention/count",
-                    "must not be negative, found " + retention.count());
         }
         if (poll != null && poll.isZero()) {
             c.diagnostics().error("/settings/poll_interval",
@@ -346,10 +339,26 @@ public final class ConfigLoader {
                 stateDir, logFormat, maxRuns, poll, grace, retention, plugins);
     }
 
+    /**
+     * A {@code run_retention:} block. Absent fields stay null for the caller to fall back on.
+     */
+    private static ButlerConfig.RunRetention runRetention(Cursor c) {
+        ButlerConfig.RunRetention retention = new ButlerConfig.RunRetention(
+                c.integer("count", null), c.duration("age", null));
+        c.rejectUnknownKeys();
+        if (retention.count() != null && retention.count() < 0) {
+            c.diagnostics().error(c.path() + "/count",
+                    "must not be negative, found " + retention.count());
+        }
+        return retention;
+    }
+
+    /**
+     * A {@code secrets:} block. Absent fields stay null for the merge to fall back on.
+     */
     private static ButlerConfig.SecretsConfig secrets(Cursor c) {
-        ButlerConfig.SecretsConfig d = ButlerConfig.SecretsConfig.defaults();
-        boolean fromEnv = c.bool("from_env", d.fromEnv());
-        List<Path> files = c.paths("file");
+        Boolean fromEnv = c.bool("from_env", null);
+        List<Path> files = c.paths("files");
         c.rejectUnknownKeys();
         return new ButlerConfig.SecretsConfig(fromEnv, files);
     }
@@ -376,6 +385,7 @@ public final class ConfigLoader {
         List<StepDef> onSuccess = steps(c, "on_success");
         List<StepDef> always = steps(c, "always");
         Map<String, String> persist = c.stringMap("persist");
+        ButlerConfig.RunRetention retention = runRetention(c.object("run_retention"));
         NotifyDef notify = notify(c.object("notify"), c.has("notify"));
 
         // The "already reported" guards keep one mistake to one message: a wrongly-typed `on:`
@@ -395,7 +405,8 @@ public final class ConfigLoader {
 
         c.rejectUnknownKeys();
         return new JobDef(name, description, vars, env, on, discover, when, concurrency,
-                timeout, steps, onFailure, onSuccess, always, persist, notify, c.path());
+                timeout, steps, onFailure, onSuccess, always, persist, retention, notify,
+                c.path());
     }
 
     private static List<TriggerDef> triggers(Cursor c) {

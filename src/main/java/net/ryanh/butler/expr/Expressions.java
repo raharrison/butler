@@ -151,9 +151,6 @@ public final class Expressions {
         throw new ExprException("unterminated string inside \"${...}\"");
     }
 
-    /**
-     * Every variable reference in a tree, for validation.
-     */
     public static List<Node.Var> variables(Node node) {
         List<Node.Var> out = new ArrayList<>();
         collect(node, out);

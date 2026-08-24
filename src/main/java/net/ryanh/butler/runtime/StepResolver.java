@@ -15,16 +15,14 @@ import java.util.Map;
 
 /**
  * Everything that happens to a step before something is done with it: find its type, judge its
- * {@code when:}, resolve its parameters and process settings, and bind them to the step's own
- * record.
+ * {@code when:}, resolve its parameters and bind them to the step's own record.
  *
- * <p>{@link PlanBuilder} and {@link JobRunner} share this. They differ in one call,
- * {@code simulate()} against {@code execute()}, and a second copy of the work either side of it
- * would drift until the dry run stopped predicting the real run.
+ * <p>{@link PlanBuilder} and {@link JobRunner} share this and differ in one call,
+ * {@code simulate()} against {@code execute()}. A second copy either side would drift until the
+ * dry run stopped predicting the real run.
  *
- * <p>Problems come back as {@link Unresolvable} rather than as a diagnostic: a real run has no
- * config file to point into, so the caller decides whether it is a {@code file:line:col} error or a
- * failed step.
+ * <p>Problems come back as {@link Unresolvable} rather than as a diagnostic, so the caller
+ * decides whether it is a {@code file:line:col} error or a failed step.
  */
 public final class StepResolver {
 

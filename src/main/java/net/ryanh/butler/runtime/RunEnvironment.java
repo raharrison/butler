@@ -24,7 +24,7 @@ public record RunEnvironment(ButlerConfig config, StepRegistry steps, NotifierRe
                                     NotifierRegistry notifiers, Diagnostics diags) {
         return new RunEnvironment(config, steps, notifiers,
                 StateStore.at(config.settings().stateDir()),
-                RunRecorder.at(config.settings().stateDir(), config.settings().runRetention()),
+                RunRecorder.at(config.settings().stateDir()),
                 new ForkingProcessRunner(),
                 Secrets.load(config.secrets(), diags));
     }

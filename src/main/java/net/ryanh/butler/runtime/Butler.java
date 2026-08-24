@@ -30,8 +30,7 @@ public final class Butler {
     private static final Logger log = LoggerFactory.getLogger(Butler.class);
 
     /**
-     * How long a cancelled run is given to notice. Short, because the generous wait already
-     * happened.
+     * How long a cancelled run is given to notice: short, the generous wait already happened.
      */
     private static final Duration LAST_CALL = Duration.ofSeconds(5);
 
@@ -219,13 +218,10 @@ public final class Butler {
      * Waits for this event's turn in its group, then runs it. The thread takes itself off the
      * in-flight list however it ends, so a shutdown drain waits only for what is still going.
      *
-     * <p>Dedupe is asked before the gate. What it turns away is not a run (DESIGN.md §6.4), so it
-     * must not take a place in the group first: under {@code queue} it would wait out whatever is
-     * deploying, and under {@code cancel_previous} it would displace it. A dry run asks nothing,
-     * because reporting every firing is the point of one.
-     *
-     * <p>The cancellation is given this thread here rather than by {@link JobRunner}: the wait for
-     * a turn is before the run starts, and is the longest thing a shutdown has to get out of.
+     * <p>Dedupe is asked before the gate: what it turns away is not a run (DESIGN.md §6.4), and
+     * taking a place in the group would queue behind, or cancel, a real one. A dry run asks
+     * nothing. The cancellation covers this thread, since waiting for a turn is the longest thing
+     * a shutdown has to get out of.
      */
     private void admitted(JobDef job, Event event, Cancellation cancel) {
         cancel.on(Thread.currentThread());

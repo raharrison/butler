@@ -9,13 +9,9 @@ import java.util.Map;
 /**
  * What every step produces, whether it ran for real or only simulated a run.
  *
- * <p>{@code outputs} carries the step-specific fields - {@code previous_target}, {@code json},
- * {@code stdout} - and is what {@code register:} exposes as {@code steps.<name>.*} together with
- * the common fields, via {@link #asContext()}.
- *
- * <p>{@code vars} is separate because a value written there lands in the {@code vars.*} namespace
- * rather than under the step's own name. That is how {@code control.set} works without the runtime
- * knowing anything about it.
+ * <p>{@code outputs} holds the step-specific fields and is what {@code register:} exposes as
+ * {@code steps.<name>.*}. {@code vars} is separate because it lands in the {@code vars.*}
+ * namespace instead, which is how {@code control.set} works without the runtime knowing of it.
  */
 public record StepResult(Status status, String message, Duration duration, int attempts,
                          Map<String, Object> outputs, Map<String, Object> vars) {
@@ -105,9 +101,6 @@ public record StepResult(Status status, String message, Duration duration, int a
         return new StepResult(status, message, duration, attempts, outputs, merged);
     }
 
-    /**
-     * Replaces what this result has to say for itself.
-     */
     public StepResult message(String text) {
         return new StepResult(status, text, duration, attempts, outputs, vars);
     }

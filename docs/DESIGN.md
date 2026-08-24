@@ -162,7 +162,7 @@ settings:
 
 secrets:
   from_env: true             # ${secret.FOO} resolves from $FOO
-  file: /etc/butler/secrets.yaml
+  files: /etc/butler/secrets.yaml
 
 vars:
   releases_root: /srv/apps
@@ -192,6 +192,8 @@ jobs:
       queue_newest_only: true
 
     timeout: 10m
+
+    run_retention: { age: 90d }      # a quarter of deploys; count stays settings' 200
 
     discover:
       - name: Ask the running service what it is
@@ -300,6 +302,7 @@ The complete job schema, for reference:
 | `on_failure` / `on_success` / `always` |          | lifecycle hooks (§2.1)                                            |
 | `persist`                              |          | state keys written after a successful run                         |
 | `notify`                               |          | `to`, `on: [success, failure]`, and per-outcome message templates |
+| `run_retention`                        |          | `count`, `age`; overrides `settings.run_retention` (§6.4)         |
 
 Everything except `on` and `steps` is optional, and a job with only those two is valid - that
 is the floor the DSL should stay usable at.
@@ -346,9 +349,10 @@ the step's wins. `ok`, `failed` and `skipped` still say how the step itself went
 ### 3.6 One config, several files
 
 `--config` may be repeated. Each file is a whole document; they are read in order and merged
-before validation, so cross-references resolve however the files are split. `jobs:`, `notifiers:`
-and `vars:` accumulate and a name may be defined only once, while `settings:` and `secrets:`
-configure the daemon and so belong to a single file.
+before validation, so cross-references resolve however the files are split. What is a collection
+accumulates - `jobs:`, `notifiers:`, `vars:` and `secrets: files:` - and a name may be defined
+only once. What is policy belongs to a single file: `settings:`, and `secrets: from_env:`. A
+config file can therefore carry its own app's secrets alongside its jobs.
 
 Later files add rather than override: overriding would need a precedence order in the reader's
 head, and the point is one job to a file, not environment layering. There is still one config,
@@ -709,7 +713,7 @@ Most apps are not HTTP services with a version endpoint. In rough order of prefe
 ```
 /var/lib/butler/
   jobs/api.json          { dedupe_key, last_run, state: { deployed_version, current_release } }
-  runs/2026-08-09/<run-id>.json
+  runs/2026-08-09/<job>-<run-id>.json
   runs/index.jsonl       append-only, one line per run, for fast history queries
 ```
 
@@ -738,10 +742,15 @@ half-written state on a mid-run failure.
 observed, the decision with both sides shown, every step with its status, duration and attempts,
 what was persisted and what was notified - so "what happened at 3am" is answerable from the state
 directory with `jq` and no logs. The append-only `runs/index.jsonl` carries the same summary fields
-as the head of each record, so the two cannot describe a run differently. Retention is by count and
-age together (`settings.run_retention`), enforced after each write on the run's own thread: it is a
-directory listing and a few deletions, and handing it to a thread nobody waits for only bought that
-back at the cost of never running at all under `butler trigger`, where the process exits first.
+as the head of each record, so the two cannot describe a run differently.
+
+Retention is by count and age together, and **per job**: on a budget shared across jobs, a
+heartbeat firing every ten seconds evicts the deploy history `runs/` exists for. The job is in the
+file name, so "this job's records" is a directory listing - the index is a convenience, and
+pruning from it would prune whatever the two had drifted apart on. The budget is
+`settings.run_retention`, overridable per job. It runs after each write on the run's own thread: a
+listing and a few deletions, and handing it to a thread nobody waits for only bought that back at
+the cost of never running at all under `butler trigger`, where the process exits first.
 Failing to write a record never fails the run that produced it: the work was done, and losing the
 note about it is worth a log line and no more.
 
@@ -1095,7 +1104,7 @@ is behind the SPI, so replacing it later touches one class.
 This is stated plainly in the docs: **`shell.run` executes with the daemon's privileges**, and
 so does anything a `discover:` block runs. A config file is as trusted as the daemon, so it
 lives at `0640 root:butler`, and secrets come from env or separate secrets files rather than
-inline. `secrets: file:` takes a list, merged the same way `--config` is (§3.6).
+inline. `secrets: files:` is a list, merged the same way `--config` is (§3.6).
 
 ### 10.3 Observability
 

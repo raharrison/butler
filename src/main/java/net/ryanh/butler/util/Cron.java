@@ -139,11 +139,9 @@ public final class Cron {
      * <p>Whole fields are skipped rather than minutes counted, so an expression that fires once a
      * year costs a handful of comparisons rather than half a million.
      *
-     * <p>Two daylight-saving cases. A local time the clock skips is moved forward by the length of
-     * the gap, which is {@link ZonedDateTime#of}'s behaviour and keeps a nightly job nightly. A
-     * local time the clock repeats resolves to the first pass, which can be behind a caller in the
-     * second, so the instant is checked as well: returning it would have a watcher sleep a
-     * negative duration, fire, and be given the same answer again.
+     * <p>Daylight saving: a skipped local time moves forward by the gap, keeping a nightly job
+     * nightly. A repeated one resolves to the first pass, which can be behind a caller in the
+     * second, so the instant is checked too - otherwise a watcher sleeps a negative duration.
      */
     public ZonedDateTime next(ZonedDateTime from) {
         LocalDateTime at = from.toLocalDateTime().truncatedTo(ChronoUnit.MINUTES).plusMinutes(1);

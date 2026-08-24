@@ -57,8 +57,8 @@ public final class JobRunner {
     }
 
     /**
-     * Whether this event is new work. A key that matches the last one processed means the job has
-     * already seen it, and is how a restart does not redo everything (DESIGN.md §6.4).
+     * A key matching the last one processed means the job has seen this event, which is how a
+     * restart does not redo everything (DESIGN.md §6.4).
      */
     public static boolean isNewWork(RunEnvironment env, JobDef job, Event event) {
         String key = event.dedupeKey();
@@ -112,8 +112,8 @@ public final class JobRunner {
      * whatever is already present: the install-time step on a host that is already serving
      * (DESIGN.md §6.3).
      *
-     * <p>Without the state the first event judges against nothing; without the dedupe key an
-     * artifact already sitting in the watch directory fires the moment the daemon starts.
+     * <p>Without the state the first event judges against nothing; without the key an artifact
+     * already in the watch directory fires the moment the daemon starts.
      */
     public Adoption adopt(JobDef job, Event candidate) {
         Instant now = Instant.now();
@@ -173,14 +173,11 @@ public final class JobRunner {
                 took, discovered, decision, List.copyOf(steps), persist, notification,
                 outcome.failedStep(), outcome.message());
         if (outcome.status() != Run.Status.CANCELLED) {
-            env.runs().record(run);
+            env.runs().record(run, env.config().retentionFor(job));
         }
         return run;
     }
 
-    /**
-     * How the run ended, and why.
-     */
     private record Outcome(Run.Status status, String failedStep, String message) {
     }
 
@@ -202,9 +199,8 @@ public final class JobRunner {
     }
 
     /**
-     * What the decision means for the run. A condition that cannot be evaluated fails the run
-     * rather than skipping it: "we could not tell" and "there is nothing to do" are different
-     * answers and only one of them is safe to assume.
+     * A condition that cannot be evaluated fails the run rather than skipping it: "we could not
+     * tell" and "there is nothing to do" are different answers, and only one is safe to assume.
      */
     private Outcome judged(JobDef job, Plan.Decision decision, Context ctx, Instant deadline,
                            List<Run.Step> steps) {
@@ -271,15 +267,13 @@ public final class JobRunner {
     }
 
     /**
-     * What a step came to: its result, and whether it ran out of time rather than deciding
-     * anything.
+     * {@code timedOut} means the step decided nothing, rather than that it failed.
      */
     private record Executed(StepResult result, boolean timedOut) {
     }
 
     /**
-     * Runs one step, honouring its {@code when:}, {@code retry:} and {@code timeout:}, and putting
-     * what it produced where the rest of the run can read it.
+     * Runs one step and puts what it produced where the rest of the run can read it.
      */
     private Executed step(String section, StepDef def, JobDef job, Context ctx,
                           Instant deadline, List<Run.Step> steps) {
@@ -426,9 +420,8 @@ public final class JobRunner {
     }
 
     /**
-     * Renders the job's notify policy and sends it. A channel that refuses the message is logged
-     * and no more: the run has already ended, and failing it now would report a deployment that
-     * worked as one that did not.
+     * A channel that refuses the message is logged and no more: the run has ended, and failing it
+     * now would report a deployment that worked as one that did not.
      */
     private Plan.Notification notify(JobDef job, Context ctx, Run.Status status) {
         if (job.notifyPolicy() == null) {

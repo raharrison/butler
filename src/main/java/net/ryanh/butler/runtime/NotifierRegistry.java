@@ -15,9 +15,6 @@ public final class NotifierRegistry {
         this.byName = Collections.unmodifiableMap(byName);
     }
 
-    /**
-     * Loads every registered notifier type from the classpath.
-     */
     public static NotifierRegistry discover() {
         return discover(NotifierRegistry.class.getClassLoader());
     }

@@ -17,9 +17,6 @@ public final class TriggerRegistry {
         this.byName = Collections.unmodifiableMap(byName);
     }
 
-    /**
-     * Loads every registered trigger type from the classpath.
-     */
     public static TriggerRegistry discover() {
         return discover(TriggerRegistry.class.getClassLoader());
     }

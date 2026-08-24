@@ -15,11 +15,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Turns a job and an event into a {@link Plan}.
- *
- * <p>Resolution is lazy per step rather than eager over the whole pipeline, because a step's
- * parameters may refer to {@code steps.earlier.*}. Each step is resolved, described and simulated
- * in turn, and what it produced is in the context before the next one is looked at.
+ * Turns a job and an event into a {@link Plan}, one step at a time: a step's parameters may
+ * refer to {@code steps.earlier.*}, so each is resolved, described and simulated before the next
+ * is looked at.
  *
  * <p>Nothing in the pipeline calls {@code execute()}: the choice between executing and describing
  * belongs to the runtime, so a step author cannot leak a side effect into a dry run.

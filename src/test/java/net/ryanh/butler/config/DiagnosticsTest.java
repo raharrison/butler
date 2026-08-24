@@ -238,7 +238,7 @@ class DiagnosticsTest {
         void anUnusablePathInAListPointsAtTheEntry() {
             var d = only("""
                     secrets:
-                      file:
+                      files:
                         - /etc/butler/secrets.yaml
                         - "\\0"
                     jobs:
@@ -247,7 +247,7 @@ class DiagnosticsTest {
                         steps: [{uses: control.log}]
                     """);
             assertAt(d, 4, "not a usable path");
-            assertEquals("/secrets/file/1", d.path());
+            assertEquals("/secrets/files/1", d.path());
         }
 
         @Test

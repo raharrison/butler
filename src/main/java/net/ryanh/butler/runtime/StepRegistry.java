@@ -21,9 +21,6 @@ public final class StepRegistry {
         this.byName = Collections.unmodifiableMap(byName);
     }
 
-    /**
-     * Loads every registered step type from the classpath.
-     */
     public static StepRegistry discover() {
         return discover(StepRegistry.class.getClassLoader());
     }

@@ -43,11 +43,11 @@ butler --config /etc/butler/butler.yaml \
        --config /etc/butler/jobs/backup.yaml
 ```
 
-| Key                         | Across files                                           |
-|-----------------------------|--------------------------------------------------------|
-| `jobs`, `notifiers`, `vars` | Accumulate. Defining a name twice is an error.         |
-| `settings`, `secrets`       | Belong to one file. Setting either in two is an error. |
-| `version`                   | Any file may carry it; each must say `1`.              |
+| Key                                          | Across files                                          |
+|----------------------------------------------|-------------------------------------------------------|
+| `jobs`, `notifiers`, `vars`, `secrets.files` | Accumulate. Defining a name twice is an error.        |
+| `settings`, `secrets.from_env`               | Policy: one file only. Setting one twice is an error. |
+| `version`                                    | Any file may carry it; each must say `1`.             |
 
 Later files add, never override. Validation judges the whole, so a file holding only `vars:` is
 fine and a set of files that between them define no jobs is not. Each problem names the file it is
@@ -55,38 +55,40 @@ in, with that file's line and column.
 
 ### `settings`
 
-| Key                   | Default                  | Meaning                                                                        |
-|-----------------------|--------------------------|--------------------------------------------------------------------------------|
-| `state_dir`           | `/var/lib/butler`        | Where per-job state and run records are written.                               |
-| `log_format`          | `json`                   | `json` or `text`. Applies to the daemon; interactive commands are always text. |
-| `max_concurrent_runs` | `4`                      | Global bound on runs in flight, across all jobs. At least 1.                   |
-| `poll_interval`       | `5s`                     | Default polling interval for polling triggers. Must be more than zero.         |
-| `shutdown_grace`      | `2m`                     | How long a shutdown lets in-flight runs finish before cancelling them.         |
-| `run_retention`       | `{count: 200, age: 30d}` | How much run history to keep. Both apply: whichever drops a record first wins. |
-| `plugins_dir`         | none                     | Directory of jars holding third-party steps, triggers or notifiers.            |
+| Key                   | Default                  | Meaning                                                                                              |
+|-----------------------|--------------------------|------------------------------------------------------------------------------------------------------|
+| `state_dir`           | `/var/lib/butler`        | Where per-job state and run records are written.                                                     |
+| `log_format`          | `json`                   | `json` or `text`. Applies to the daemon; interactive commands are always text.                       |
+| `max_concurrent_runs` | `4`                      | Global bound on runs in flight, across all jobs. At least 1.                                         |
+| `poll_interval`       | `5s`                     | Default polling interval for polling triggers. Must be more than zero.                               |
+| `shutdown_grace`      | `2m`                     | How long a shutdown lets in-flight runs finish before cancelling them.                               |
+| `run_retention`       | `{count: 200, age: 30d}` | Default run history per job. Both apply: whichever drops a record first wins. A job may override it. |
+| `plugins_dir`         | none                     | Directory of jars holding third-party steps, triggers or notifiers.                                  |
 
 ### `secrets`
 
 ```yaml
 secrets:
-  from_env: true                     # ${secret.FOO} resolves from $FOO
-  file: /etc/butler/secrets.yaml     # a flat name: value mapping
+  from_env: true                    # ${secret.FOO} resolves from $FOO
+  files: /etc/butler/secrets.yaml   # a flat name: value mapping
 ```
 
 A named-but-absent file is not an error, since configs are routinely validated somewhere other than
 the host they run on. A file that exists and cannot be parsed is.
 
-`file:` also takes a list, read in order and merged:
+`files:` takes one path or a list of them, read in order and merged:
 
 ```yaml
 secrets:
-  file:
+  files:
     - /etc/butler/secrets.yaml
     - /etc/butler/secrets.d/api.yaml
 ```
 
 A name may be defined in only one of them: a duplicate is an error rather than one credential
-silently shadowing another.
+silently shadowing another. The list also accumulates across [config files](#several-files), so a
+config file holding one app's jobs can name that app's secrets file beside them. Naming the same
+file twice reads it once.
 
 ### `vars`
 
@@ -137,8 +139,24 @@ A channel that refuses a message is logged; it never fails a run that otherwise 
 | `on_failure` / `on_success` / `always` |          | Lifecycle hooks.                                                    |
 | `persist`                              |          | State keys written after a successful run.                          |
 | `notify`                               |          | `to`, `on: [success, failure]`, and a message template per outcome. |
+| `run_retention`                        |          | `count`, `age`. Overrides `settings.run_retention` for this job.    |
 
 A job with only `on:` and `steps:` is valid, and that is the floor the DSL stays usable at.
+
+### `run_retention`
+
+History is kept per job, so a job that fires every ten seconds cannot crowd out one that deploys
+once a week. `settings.run_retention` is the budget each job gets; a job setting its own overrides
+the fields it names and inherits the rest:
+
+```yaml
+settings:
+  run_retention: { count: 200, age: 30d }
+
+jobs:
+  heartbeat:
+    run_retention: { count: 20 }     # 20 records, still dropped after 30d
+```
 
 ### Run lifecycle
 

@@ -1,5 +1,6 @@
 package net.ryanh.butler.config;
 
+import net.ryanh.butler.config.model.ButlerConfig;
 import net.ryanh.butler.config.model.Enums;
 import net.ryanh.butler.config.model.JobDef;
 import net.ryanh.butler.config.model.StepDef;
@@ -133,6 +134,15 @@ class ConfigLoaderTest {
         }
 
         @Test
+        @DisplayName("the job's run_retention overrides age and inherits the settings count")
+        void jobRetention() throws IOException {
+            var c = load().config();
+            var keep = c.retentionFor(c.jobs().get("api"));
+            assertEquals(200, keep.count());
+            assertEquals(Duration.ofDays(90), keep.age());
+        }
+
+        @Test
         void reservedKeysAreLiftedAndParamsAreLeftRaw() throws IOException {
             JobDef job = load().config().jobs().get("api");
             StepDef symlink = job.steps().get(1);
@@ -226,7 +236,7 @@ class ConfigLoaderTest {
         void secretsFileIsOneOrMany() {
             var one = loadAndValidate("""
                     secrets:
-                      file: /etc/butler/secrets.yaml
+                      files: /etc/butler/secrets.yaml
                     jobs:
                       j:
                         on: [{uses: manual}]
@@ -238,7 +248,7 @@ class ConfigLoaderTest {
 
             var many = loadAndValidate("""
                     secrets:
-                      file:
+                      files:
                         - /etc/butler/secrets.yaml
                         - /etc/butler/secrets.d/api.yaml
                     jobs:
@@ -251,6 +261,79 @@ class ConfigLoaderTest {
                             Path.of("/etc/butler/secrets.d/api.yaml")),
                     many.config().secrets().files(),
                     "read in the order they were listed");
+        }
+    }
+
+    @Nested
+    @DisplayName("run retention")
+    class Retention {
+
+        private static final String CONFIG = """
+                settings:
+                  run_retention: { count: 500, age: 90d }
+                
+                jobs:
+                  deploy:
+                    on: [{uses: manual}]
+                    steps: [{uses: control.log}]
+                  heartbeat:
+                    run_retention: { count: 5 }
+                    on: [{uses: manual}]
+                    steps: [{uses: control.log}]
+                  audit:
+                    run_retention: { age: 7d }
+                    on: [{uses: manual}]
+                    steps: [{uses: control.log}]
+                """;
+
+        @Test
+        @DisplayName("a job that sets none gets the global budget as its own")
+        void globalIsTheDefault() {
+            var r = loadAndValidate(CONFIG);
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            var keep = r.config().retentionFor(r.config().jobs().get("deploy"));
+            assertEquals(500, keep.count());
+            assertEquals(Duration.ofDays(90), keep.age());
+        }
+
+        @Test
+        @DisplayName("a job overrides the fields it names and inherits the rest")
+        void jobOverridesFieldByField() {
+            var r = loadAndValidate(CONFIG);
+            var keep = r.config().retentionFor(r.config().jobs().get("heartbeat"));
+            assertEquals(5, keep.count());
+            assertEquals(Duration.ofDays(90), keep.age(), "age was not overridden");
+
+            var age = r.config().retentionFor(r.config().jobs().get("audit"));
+            assertEquals(500, age.count(), "count was not overridden");
+            assertEquals(Duration.ofDays(7), age.age());
+        }
+
+        @Test
+        void aNegativeCountIsRejectedAtJobLevelToo() {
+            var r = loadAndValidate("""
+                    jobs:
+                      j:
+                        run_retention: { count: -1 }
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            var d = DiagnosticsTest.only(r.diagnostics());
+            assertEquals("/jobs/j/run_retention/count", d.path());
+            assertTrue(d.message().contains("must not be negative"), d.message());
+        }
+
+        @Test
+        @DisplayName("the global default is what a config that says nothing gets")
+        void builtInDefault() {
+            var r = loadAndValidate("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            assertEquals(ButlerConfig.Settings.defaults().runRetention(),
+                    r.config().retentionFor(r.config().jobs().get("j")));
         }
     }
 
@@ -443,6 +526,86 @@ class ConfigLoaderTest {
             assertEquals("more.yaml", d.file());
             assertEquals("/settings", d.path());
             assertTrue(d.message().contains("already set in base.yaml"), d.message());
+        }
+
+        @Test
+        @DisplayName("secrets: files: accumulate, so a file can carry its own app's secrets")
+        void secretsFilesAccumulate() {
+            var r = loadAndValidate(
+                    file("base.yaml", """
+                            secrets:
+                              from_env: false
+                              files: /etc/butler/secrets.yaml
+                            jobs:
+                              j:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log}]
+                            """),
+                    file("api.yaml", """
+                            secrets:
+                              files: /etc/butler/secrets.d/api.yaml
+                            jobs:
+                              api:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log}]
+                            """));
+            assertEquals("", r.diagnostics().render("x"));
+            assertEquals(List.of(Path.of("/etc/butler/secrets.yaml"),
+                            Path.of("/etc/butler/secrets.d/api.yaml")),
+                    r.config().secrets().files(), "in the order the files were given");
+            assertFalse(r.config().secrets().fromEnv(), "and from_env still applies");
+        }
+
+        @Test
+        @DisplayName("the same secrets file named twice is read once")
+        void secretsFilesAreDistinct() {
+            var r = loadAndValidate(
+                    file("base.yaml", """
+                            secrets:
+                              files: /etc/butler/secrets.yaml
+                            jobs:
+                              j:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log}]
+                            """),
+                    file("api.yaml", """
+                            secrets:
+                              files: /etc/butler/secrets.yaml
+                            jobs:
+                              api:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log}]
+                            """));
+            assertEquals("", r.diagnostics().render("x"),
+                    "reading it twice would make every secret a duplicate of itself");
+            assertEquals(List.of(Path.of("/etc/butler/secrets.yaml")), r.config().secrets().files());
+        }
+
+        @Test
+        @DisplayName("secrets: from_env: is a policy, so it belongs to one file")
+        void fromEnvMayOnlySetOnce() {
+            var r = loadAndValidate(
+                    file("base.yaml", """
+                            secrets:
+                              from_env: false
+                            jobs:
+                              j:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log}]
+                            """),
+                    file("api.yaml", """
+                            secrets:
+                              from_env: true
+                            jobs:
+                              api:
+                                on: [{uses: manual}]
+                                steps: [{uses: control.log}]
+                            """));
+            var d = DiagnosticsTest.only(r.diagnostics());
+            assertEquals("api.yaml", d.file());
+            assertEquals("/secrets/from_env", d.path());
+            assertTrue(d.message().contains("already set in base.yaml"), d.message());
+            assertFalse(r.config().secrets().fromEnv(), "the first file is the one kept");
         }
 
         @Test

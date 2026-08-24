@@ -73,7 +73,7 @@ public final class Cursor {
         return string(key, null);
     }
 
-    public int integer(String key, int fallback) {
+    public Integer integer(String key, Integer fallback) {
         Object v = raw(key);
         if (v == null) {
             return fallback;
@@ -89,7 +89,7 @@ public final class Cursor {
         }
     }
 
-    public boolean bool(String key, boolean fallback) {
+    public Boolean bool(String key, Boolean fallback) {
         Object v = raw(key);
         if (v == null) {
             return fallback;

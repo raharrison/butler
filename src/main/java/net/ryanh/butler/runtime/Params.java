@@ -29,9 +29,6 @@ import java.util.regex.PatternSyntaxException;
  * the first mismatch and the loader must report every problem at once. Here the failure stops at
  * one step, and the caller turns it into a diagnostic with a file, line and column.
  *
- * <p>Config keys are snake_case, so the mapper carries the matching naming strategy and
- * {@link #names} asks that same strategy how a component is spelled - one source of truth for the
- * name a config author has to type.
  */
 public final class Params {
 
@@ -57,12 +54,8 @@ public final class Params {
     }
 
     /**
-     * The scalars with a syntax of their own to report on. Each is parsed here rather than by the
-     * step or trigger that takes it, which is what turns a malformed one into a diagnostic with a
-     * file, line and column instead of a watcher that dies the moment the daemon starts.
-     *
-     * <p>A {@link Duration} takes {@code 30s} rather than ISO-8601, through the same converter the
-     * loader uses.
+     * The scalars with a syntax of their own, each through the same converter the loader uses:
+     * a {@link Duration} parameter takes {@code 30s}, not ISO-8601.
      */
     private static SimpleModule butlerScalars() {
         SimpleModule module = new SimpleModule("butler-scalars");
@@ -110,7 +103,8 @@ public final class Params {
     }
 
     /**
-     * The parameter names a config author writes, in declaration order.
+     * The parameter names a config author writes, in declaration order, asked of the mapper's own
+     * naming strategy: config keys are snake_case and record components are not.
      */
     public static List<String> names(Class<?> configType) {
         List<String> out = new ArrayList<>();
@@ -147,12 +141,9 @@ public final class Params {
     }
 
     /**
-     * Whether a parameter value still holds a {@code ${...}} anywhere inside it.
-     *
-     * <p>Asked before binding, where a template means the value has no type yet. Asked again after
-     * resolution, where it means the author wrote {@code $${} for a literal, or the event carried
-     * a value with braces in it, and a {@code ${} in the step's description is not the step's
-     * fault.
+     * Whether a value still holds a {@code ${...}} anywhere inside it. Before binding that means
+     * it has no type yet; after resolution it means the author escaped one, or an event carried
+     * braces.
      */
     public static boolean containsTemplate(Object value) {
         return switch (value) {

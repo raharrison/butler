@@ -48,15 +48,9 @@ public sealed interface Node {
     record Call(String name, List<Node> args) implements Node {
     }
 
-    /**
-     * A binary operation.
-     */
     record Bin(Op op, Node left, Node right) implements Node {
     }
 
-    /**
-     * Logical negation.
-     */
     record Not(Node operand) implements Node {
     }
 

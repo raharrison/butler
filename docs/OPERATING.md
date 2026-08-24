@@ -20,7 +20,7 @@ The [README](../README.md) is the guide to writing a config;
 | `/usr/lib/butler/butler.jar` | `root:root`     | `0644` | The shaded jar. The only artifact that matters.            |
 | `/usr/bin/butler`            | `root:root`     | `0755` | Launcher script, `exec java -jar`.                         |
 | `/etc/butler/butler.yaml`    | `root:butler`   | `0640` | The config. Readable by the daemon, writable only by root. |
-| `/etc/butler/secrets.yaml`   | `root:butler`   | `0640` | Optional, if `secrets: file:` names it.                    |
+| `/etc/butler/secrets.yaml`   | `root:butler`   | `0640` | Optional, if `secrets: files:` names it.                   |
 | `/etc/sudoers.d/butler`      | `root:root`     | `0440` | The allowlist, if any step needs root.                     |
 | `/var/lib/butler`            | `butler:butler` | `0750` | State directory: per-job state and run history.            |
 
@@ -186,9 +186,9 @@ few hundred lines a day rather than a stream.
 
 ```
 /var/lib/butler/
-  jobs/api.json                    { dedupe_key, last_run, state: { ... } }
-  runs/2026-08-09/<run-id>.json    one full record per run
-  runs/index.jsonl                 append-only, one line per run
+  jobs/api.json                          { dedupe_key, last_run, state: { ... } }
+  runs/2026-08-09/<job>-<run-id>.json    one full record per run
+  runs/index.jsonl                       append-only, one line per run
 ```
 
 Plain JSON, written to a temporary file and moved into place, so a crash mid-write leaves the
@@ -292,9 +292,10 @@ disagree:
 }
 ```
 
-Retention is `settings.run_retention`, by count and age together, enforced after each run. Records
-outside either bound are deleted and the index is rewritten to match. It costs a run a directory
-listing, tens of milliseconds against a few hundred records.
+Retention is by count and age together, enforced after each run and **per job**: a job's records
+are counted against its own budget, never another's. That budget is `settings.run_retention`, or
+the job's own `run_retention:`. Records outside either bound are deleted and their index lines with
+them, at the cost of a directory listing per run.
 
 ## Monitoring
 
@@ -310,7 +311,7 @@ jq -rs 'group_by(.job)[] | max_by(.started_at) | "\(.job) \(.status) \(.started_
    /var/lib/butler/runs/index.jsonl
 
 # One run in full.
-jq . /var/lib/butler/runs/2026-08-09/20260809T031407-a1b2.json
+jq . /var/lib/butler/runs/2026-08-09/api-20260809T031407-a1b2.json
 
 # Runs that took longer than a minute.
 jq -r 'select(.duration_ms > 60000) | "\(.job) \(.duration) \(.id)"' \
@@ -323,7 +324,7 @@ admin HTTP server is the first thing in line after it ([DESIGN.md §11](DESIGN.m
 
 A job that never fires produces no records at all, which no query over `runs/` will show you. If
 that matters for a job, give it a `schedule.every` heartbeat or watch `last_run` in
-`jobs/<job>.json`.
+`jobs/<job>.json`. A heartbeat costs no other job its history: retention is per job.
 
 ## Upgrading
 
@@ -349,7 +350,7 @@ empty rather than refusing to start.
 | `settle` (per trigger) | Raise it if artifacts arrive slowly. Too low deploys a half-uploaded file, which settle exists to prevent.                                             |
 | `max_concurrent_runs`  | Total runs in flight across all jobs. Raise it only if separate jobs genuinely need to overlap; within a job the concurrency group already serialises. |
 | `shutdown_grace`       | Raise it, and `TimeoutStopSec` with it, if a deploy legitimately takes longer than 2 minutes.                                                          |
-| `run_retention`        | Count and age together. Records are small; the default keeps 200 or 30 days.                                                                           |
+| `run_retention`        | Count and age together, per job. Records are small; the default keeps each job 200 or 30 days.                                                         |
 | `BUTLER_JAVA_OPTS`     | A heap ceiling on a small VPS: `-Xmx128m` is ample. Butler holds one run's captured output at a time, bounded at 256KB per stream.                     |
 
 Threads are not a knob. One virtual thread per watcher and per run, so a hundred jobs cost a

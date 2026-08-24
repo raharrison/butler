@@ -15,10 +15,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>The step runs on its own virtual thread and is interrupted if it overstays, which is also how
  * the job-level timeout works: the runner gives each step whatever is left of the job's time
  * (DESIGN.md §5.1). Interruption is cooperative, so a step that blocks on nothing outlives its
- * timeout and is reported as stranded.
- *
- * <p>A step that turns its interrupt into a result of its own keeps it, so a process killed for
- * overstaying still reports the tail of what it printed.
+ * timeout and is reported as stranded; one that turns its interrupt into a result of its own
+ * keeps it, and still reports the tail of what it printed.
  */
 final class StepExecution {
 

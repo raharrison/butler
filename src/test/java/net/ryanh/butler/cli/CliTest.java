@@ -199,7 +199,7 @@ class CliTest {
             write("secrets.yaml", "this: [is not, valid\n");
             Path p = write("secrets-config.yaml", """
                     secrets:
-                      file: %s
+                      files: %s
                     jobs:
                       j:
                         on: [{uses: manual}]
@@ -218,7 +218,7 @@ class CliTest {
         void absentSecretsFileIsFine() throws IOException {
             Path p = write("absent-secrets.yaml", """
                     secrets:
-                      file: %s
+                      files: %s
                     jobs:
                       j:
                         on: [{uses: manual}]

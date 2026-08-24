@@ -57,9 +57,6 @@ public final class ConfigMixin {
         return List.copyOf(unique);
     }
 
-    /**
-     * The config files as one string, for a message about all of them.
-     */
     public String describe() {
         return String.join(", ", configs().stream().map(Path::toString).toList());
     }
@@ -68,9 +65,6 @@ public final class ConfigMixin {
         return dryRun;
     }
 
-    /**
-     * The step types this build can run. Loaded once per command.
-     */
     public StepRegistry steps() {
         if (steps == null) {
             steps = StepRegistry.discover(extensions);
@@ -78,9 +72,6 @@ public final class ConfigMixin {
         return steps;
     }
 
-    /**
-     * The trigger types this build can watch with. Loaded once per command.
-     */
     public TriggerRegistry triggers() {
         if (triggers == null) {
             triggers = TriggerRegistry.discover(extensions);
@@ -88,9 +79,6 @@ public final class ConfigMixin {
         return triggers;
     }
 
-    /**
-     * The notification channels this build can send through. Loaded once per command.
-     */
     public NotifierRegistry notifiers() {
         if (notifiers == null) {
             notifiers = NotifierRegistry.discover(extensions);

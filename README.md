@@ -195,8 +195,9 @@ butler validate -c base.yaml -c api.yaml    # several files, read as one config
 config the daemon will. Exit codes are `0` ok, `1` failure or validation errors, `2` bad usage.
 
 **Repeat `--config` to spread one config over several files.** They are read in order and merged:
-`jobs:`, `notifiers:` and `vars:` accumulate and a name may only be defined once, while `settings:`
-and `secrets:` belong in a single file. See [Several files](docs/CONFIGURATION.md#several-files).
+`jobs:`, `notifiers:`, `vars:` and `secrets: files:` accumulate and a name may only be defined
+once, while `settings:` is policy and belongs in a single file. See
+[Several files](docs/CONFIGURATION.md#several-files).
 
 Logs go to stderr; stdout carries whatever you asked for, so `butler trigger api --dry-run | less`
 shows the plan and nothing else.
@@ -212,12 +213,12 @@ settings: # all optional, defaults shown
   max_concurrent_runs: 4         # global bound on runs in flight
   poll_interval: 5s              # default cadence for polling triggers
   shutdown_grace: 2m             # how long a drain lets in-flight runs finish
-  run_retention: { count: 200, age: 30d }
-  plugins_dir: /var/lib/butler/plugins    # jars of third-party steps
+  run_retention: { count: 200, age: 30d }  # per job; a job may override it
+  plugins_dir: /var/lib/butler/plugins     # jars of third-party steps
 
 secrets:
   from_env: true                 # ${secret.FOO} resolves from $FOO
-  file: /etc/butler/secrets.yaml # a flat name: value mapping
+  files: /etc/butler/secrets.yaml # a flat name: value mapping
 
 vars: # readable everywhere as ${vars.name}
   releases_root: /srv/apps
@@ -238,6 +239,7 @@ jobs:
     when: <condition>       # run only if true
     concurrency: { group: api, mode: queue, queue_newest_only: true }
     timeout: 10m               # whole-run limit; exceeding it fails the run
+    run_retention: { age: 90d }  # overrides settings.run_retention for this job
     steps: [ ... ]           # required: the pipeline
     on_failure: [ ... ]          # hooks
     on_success: [ ... ]

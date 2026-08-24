@@ -9,9 +9,8 @@ import java.util.List;
  * the step's parameters, and the runtime binds the config's parameter keys to it. That record is
  * also where {@code butler steps} gets its schema, so documentation cannot drift from the code.
  *
- * <p>{@link #describe} has no default implementation: a step that cannot explain its effect cannot
- * be written, so {@code --dry-run} is a property of the SPI rather than a flag each step interprets
- * for itself.
+ * <p>{@link #describe} has no default: a step that cannot explain its effect cannot be written,
+ * so {@code --dry-run} is a property of the SPI rather than a flag per step.
  *
  * @param <C> the step's own parameter record
  */
@@ -47,10 +46,9 @@ public interface StepType<C> {
      * Parameters the step cannot run without, so {@code butler validate} refuses a config missing
      * one rather than leaving it to fail at 3am on the fifth step (DESIGN.md §1.6).
      *
-     * <p>Presence is all that is checked: a value may be {@code ${...}} that only a run can
-     * resolve. A step still guards them in {@link #execute}, since a plugin may declare nothing
-     * and a rule too subtle for a list - {@code fs.template} taking {@code from:} or
-     * {@code content:} but not both - belongs there anyway.
+     * <p>Presence is all that is checked; the value may be a {@code ${...}} only a run resolves.
+     * A step still guards them in {@link #execute}, where subtler rules - {@code fs.template}
+     * taking {@code from:} or {@code content:} but not both - belong anyway.
      */
     default List<String> required() {
         return List.of();
@@ -61,8 +59,8 @@ public interface StepType<C> {
      * condition parameter sees of the probe in flight, and what {@code extract:} reads from the
      * result. {@code status}, {@code headers}, {@code body} and {@code json} for an HTTP step.
      *
-     * <p>Validation judges each expression against what can reach it, so omitting a name here
-     * turns a valid config into an error.
+     * <p>Validation judges expressions against what can reach them, so omitting one here turns a
+     * valid config into an error.
      */
     default List<String> locals() {
         return List.of();
@@ -76,9 +74,8 @@ public interface StepType<C> {
     }
 
     /**
-     * The result later steps should read when {@link #execute} was skipped for a dry run. Often
-     * computable for real: reading a symlink to report its current target changes nothing, so the
-     * rollback branch of a pipeline still describes correctly.
+     * The result later steps read when {@link #execute} was skipped for a dry run. Often
+     * computable for real: reading a symlink to report its target changes nothing.
      */
     default StepResult simulate(C config, RunContext ctx) {
         return StepResult.ok();

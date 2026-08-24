@@ -38,8 +38,7 @@ public interface RunContext {
      * A condition with its {@code ${...}} holes replaced by the literals they resolve to.
      *
      * <p>For {@code describe()}: a condition is parsed rather than interpolated, so it is the one
-     * parameter still holding a hole when a step is asked to explain itself, and a dry run may not
-     * show one.
+     * parameter still holding a hole when a step explains itself.
      */
     String resolveCondition(String condition);
 
@@ -50,14 +49,8 @@ public interface RunContext {
      */
     RunContext withLocals(Map<String, Object> locals);
 
-    /**
-     * How this step starts a process.
-     */
     ProcessRunner processes();
 
-    /**
-     * How this step sends through a channel declared under {@code notifiers:}.
-     */
     Notifications notifications();
 
     /**
@@ -68,7 +61,7 @@ public interface RunContext {
     ProcessRunner.Command command();
 
     /**
-     * Whether this run is only being described. Steps rarely need it; the runtime decides.
+     * Steps rarely need this; the runtime decides what a dry run skips.
      */
     boolean dryRun();
 }

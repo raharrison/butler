@@ -13,12 +13,9 @@ import java.util.*;
 /**
  * The {@code secret.*} namespace: secrets files, the process environment, or both.
  *
- * <p>A map rather than a lookup method because that is what the expression evaluator walks, and
- * environment-backed secrets cannot be enumerated - only asked for by name - so {@link #get} does
- * the work and {@link #entrySet} reports what came from the file.
- *
- * <p>Values are not redacted anywhere (DESIGN.md §11); the documented guidance is to keep them out
- * of step output rather than to scrub them afterwards.
+ * <p>A map because that is what the evaluator walks, but environment-backed secrets cannot be
+ * enumerated: {@link #get} does the work and {@link #entrySet} reports only the files. Values are
+ * never redacted (DESIGN.md §11).
  */
 public final class Secrets extends AbstractMap<String, Object> {
 
@@ -53,7 +50,7 @@ public final class Secrets extends AbstractMap<String, Object> {
                 continue;
             }
             // With one file there is no index in the source to point at.
-            String at = files.size() == 1 ? "/secrets/file" : "/secrets/file/" + i;
+            String at = files.size() == 1 ? "/secrets/files" : "/secrets/files/" + i;
             try {
                 Map<String, Object> read = mapper.readValue(Files.readString(file),
                         new TypeReference<LinkedHashMap<String, Object>>() {

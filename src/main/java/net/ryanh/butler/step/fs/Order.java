@@ -23,9 +23,6 @@ public enum Order {
      */
     SEMVER,
 
-    /**
-     * By last modification time.
-     */
     MODIFIED;
 
     Comparator<Path> comparator() {
