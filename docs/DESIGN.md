@@ -742,7 +742,9 @@ half-written state on a mid-run failure.
 observed, the decision with both sides shown, every step with its status, duration and attempts,
 what was persisted and what was notified - so "what happened at 3am" is answerable from the state
 directory with `jq` and no logs. The append-only `runs/index.jsonl` carries the same summary fields
-as the head of each record, so the two cannot describe a run differently.
+as the head of each record, so the two cannot describe a run differently. `butler runs` reads
+the index and `butler show <id>` reads the record it names (§10), which is why the index is
+written as one object per line: a listing costs one file read whatever the history holds.
 
 Retention is by count and age together, and **per job**: on a budget shared across jobs, a
 heartbeat firing every ten seconds evicts the deploy history `runs/` exists for. The job is in the
@@ -1053,6 +1055,8 @@ butler validate                     # exit 1 listing every error, for CI
 butler check                        # validate, then print the resolved effective config
 butler trigger <job> [--set version=1.2.3]
 butler adopt   [<job>]              # discovery only: record state, execute nothing
+butler runs    [<job>]              # recorded runs, newest first
+butler show    <id>                 # one recorded run in full
 butler steps   [<name>]             # registered steps and their schemas
 butler generate-completion          # picocli's own, generated from the real command tree
 ```
@@ -1078,6 +1082,10 @@ running things - leave it in dry run for a day and read the log.
   suppressed as already done. Combined with `--dry-run` this is the authoring loop.
 - `butler adopt` is the install-time step on an existing host, seeding state from reality so the
   first real event is judged correctly (§6.3).
+- `butler runs` reads `runs/index.jsonl` and `butler show <id>` reads the one record (§6.4).
+  Both answer from the state directory alone, with the daemon stopped, and `butler show`
+  renders through `RunRenderer`, so a record and the report the run printed at the time are
+  the same text rather than two accounts that can drift.
 - `butler steps` is generated from the registry, so a newly added step is documented the moment
   it is registered.
 
@@ -1154,8 +1162,9 @@ changed underneath them.
 Designed for, not built yet. Recorded here so v1 does not accidentally foreclose them. The first
 three are in the order they are worth doing; the rest are decisions not to build something.
 
-- **Admin HTTP server** and `http.webhook` triggers. The one module unlocks manual triggering,
-  run history and CI push-notification at once, which is why it is first in line after v1.
+- **Admin HTTP server** and `http.webhook` triggers. The one module unlocks triggering a job and
+  reading its history *remotely*, plus CI push-notification, which is why it is first in line
+  after v1. Locally both are already answered, by `butler trigger` and `butler runs` (§10).
 - **Docker / compose** steps and registry polling.
 - **Job templates** (`extends:` + `with:`). Once there are more than two apps this becomes the
   main DRY lever. It is a pure config-expansion pass before validation, so it can be added

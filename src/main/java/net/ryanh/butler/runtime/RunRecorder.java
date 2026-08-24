@@ -1,6 +1,7 @@
 package net.ryanh.butler.runtime;
 
 import net.ryanh.butler.config.model.ButlerConfig;
+import net.ryanh.butler.spi.StepResult;
 import net.ryanh.butler.util.Durations;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +10,7 @@ import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -188,6 +190,173 @@ public final class RunRecorder {
         out.put("attempts", s.attempts());
         out.put("message", s.message());
         return out;
+    }
+
+
+    // --------------------------------------------------------------------------- reading
+
+    /**
+     * One line of {@code runs/index.jsonl}, which is also the head of the full record.
+     */
+    public record Summary(String id, String job, String trigger, Run.Status status,
+                          Instant startedAt, Duration duration, String failedStep, String message) {
+    }
+
+    /**
+     * Every run the index still carries, in the order it was written, which is the order runs
+     * finished.
+     *
+     * <p>A line this build cannot read is skipped rather than fatal: history is an account of what
+     * happened, and one unreadable entry must not hide the rest of it.
+     */
+    public List<Summary> history() {
+        Path index = index();
+        if (!Files.isReadable(index)) {
+            return List.of();
+        }
+        List<Summary> found = new ArrayList<>();
+        try {
+            for (String line : Files.readAllLines(index, StandardCharsets.UTF_8)) {
+                Summary summary = summary(line);
+                if (summary != null) {
+                    found.add(summary);
+                }
+            }
+        } catch (IOException e) {
+            log.error("could not read {}: {}", index, e.toString());
+            return List.of();
+        }
+        return List.copyOf(found);
+    }
+
+    /**
+     * The full record for one run, or null if none survives under that id. The id carries the day
+     * it started, so this opens one directory rather than walking the tree.
+     *
+     * @throws RuntimeException if the record exists but cannot be read
+     */
+    public Run read(String id) {
+        // Checked before it reaches the directory glob below, where a wildcard would match a
+        // record the caller did not ask for.
+        if (id == null || !RECORD.matcher(id + ".json").matches()) {
+            return null;
+        }
+        Instant started = startedAt(id);
+        if (started == null) {
+            return null;
+        }
+        Path day = runsDir.resolve(DAY.format(started));
+        if (!Files.isDirectory(day)) {
+            return null;
+        }
+        String suffix = "-" + id + ".json";
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(day, "*" + suffix)) {
+            for (Path file : files) {
+                return run(LINES.readValue(Files.readString(file, StandardCharsets.UTF_8),
+                        Map.class));
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("could not read the record for run " + id, e);
+        }
+        return null;
+    }
+
+    /**
+     * The reverse of {@link #summary(Run)}. A line missing what identifies a run, or carrying a
+     * status this build does not know, is not one.
+     */
+    private static Summary summary(String line) {
+        try {
+            if (!(LINES.readValue(line, Map.class) instanceof Map<?, ?> m)) {
+                return null;
+            }
+            Run.Status status = status(m.get("status"), Run.Status.class);
+            Instant started = m.get("started_at") == null
+                    ? null : Instant.parse(String.valueOf(m.get("started_at")));
+            if (m.get("id") == null || m.get("job") == null || status == null || started == null) {
+                return null;
+            }
+            return new Summary(str(m.get("id")), str(m.get("job")), str(m.get("trigger")), status,
+                    started, Duration.ofMillis(number(m.get("duration_ms"))),
+                    str(m.get("failed_step")), str(m.get("message")));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The reverse of {@link #document(Run)}. Durations round-trip exactly, because
+     * {@link Durations#format} picks the largest unit that divides them.
+     */
+    private static Run run(Map<?, ?> doc) {
+        List<Plan.Entry> discover = new ArrayList<>();
+        int number = 0;
+        for (Object o : list(doc.get("discover"))) {
+            Map<?, ?> e = (Map<?, ?>) o;
+            String skipped = str(e.get("skipped"));
+            String error = str(e.get("error"));
+            // The renderer numbers what ran and dashes what did not, as Discovery did.
+            boolean ran = skipped == null && error == null;
+            discover.add(new Plan.Entry("discover", ran ? ++number : 0, str(e.get("label")),
+                    str(e.get("uses")), strings(e.get("observed")), List.of(), skipped, error));
+        }
+
+        List<Run.Step> steps = new ArrayList<>();
+        for (Object o : list(doc.get("steps"))) {
+            Map<?, ?> s = (Map<?, ?>) o;
+            steps.add(new Run.Step(str(s.get("section")), str(s.get("label")), str(s.get("uses")),
+                    status(s.get("status"), StepResult.Status.class),
+                    Durations.parse(str(s.get("duration"))), (int) number(s.get("attempts")),
+                    str(s.get("message"))));
+        }
+
+        Map<?, ?> when = doc.get("when") instanceof Map<?, ?> m ? m : null;
+        Map<?, ?> notified = doc.get("notified") instanceof Map<?, ?> m ? m : null;
+
+        return new Run(str(doc.get("id")), str(doc.get("job")), str(doc.get("trigger")),
+                values(doc.get("facts")), status(doc.get("status"), Run.Status.class),
+                Instant.parse(str(doc.get("started_at"))),
+                Duration.ofMillis(number(doc.get("duration_ms"))),
+                List.copyOf(discover),
+                when == null ? null : new Plan.Decision(str(when.get("source")),
+                        str(when.get("explained")), Boolean.TRUE.equals(when.get("result")),
+                        str(when.get("error"))),
+                List.copyOf(steps), values(doc.get("persisted")),
+                notified == null ? null : new Plan.Notification(str(notified.get("to")),
+                        str(notified.get("message"))),
+                str(doc.get("failed_step")), str(doc.get("message")));
+    }
+
+    private static <E extends Enum<E>> E status(Object value, Class<E> type) {
+        try {
+            return value == null ? null
+                    : Enum.valueOf(type, String.valueOf(value).toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static String str(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private static long number(Object value) {
+        return value instanceof Number n ? n.longValue() : 0L;
+    }
+
+    private static List<?> list(Object value) {
+        return value instanceof List<?> l ? l : List.of();
+    }
+
+    private static List<String> strings(Object value) {
+        return list(value).stream().map(RunRecorder::str).toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> values(Object value) {
+        return value instanceof Map<?, ?> m
+                ? Collections.unmodifiableMap(new LinkedHashMap<>((Map<String, Object>) m))
+                : Map.of();
     }
 
     // --------------------------------------------------------------------------- retention

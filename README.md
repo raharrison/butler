@@ -165,6 +165,8 @@ butler validate                          # exit 1 listing every error, for CI
 butler check                             # validate, then print the effective config
 butler trigger <job> [--set k=v]         # run one job once, or rehearse it with --dry-run
 butler adopt [<job>]                     # discovery only: record state, execute nothing
+butler runs [<job>] [--failed]           # what has run, newest first
+butler show <id>                         # one recorded run in full
 butler steps [<name>]                    # the registered step types and their parameters
 butler generate-completion               # bash/zsh completion script
 ```
@@ -177,6 +179,8 @@ butler generate-completion               # bash/zsh completion script
 | `butler check`          | Answers "is that key doing what I think", with defaults filled in.                                 |
 | `butler trigger <job>`  | Run or rehearse one job now. `--set k=v` supplies or overrides a trigger fact.                     |
 | `butler adopt [<job>]`  | Install-time seeding on a host that is already serving. See [below](#onboarding-an-existing-host). |
+| `butler runs [<job>]`   | What has run and how it went, from the history under `state_dir`.                                  |
+| `butler show <id>`      | One recorded run, rendered as the report it printed at the time.                                   |
 | `butler steps [<name>]` | The vocabulary this build actually has, generated from the registry.                               |
 
 Examples:
@@ -187,6 +191,8 @@ butler steps fs.symlink                     # just one
 butler trigger api --dry-run | less         # read the plan for the newest artifact present
 butler trigger api --set version=1.2.4      # run against a fact you supply
 butler adopt                                # seed state for every job, run nothing
+butler runs --failed --since 24h            # yesterday's failures, any job
+butler show 20260809T031407-a1b2            # what that one did, step by step
 butler validate -c ./butler.yaml            # any command takes --config
 butler validate -c base.yaml -c api.yaml    # several files, read as one config
 ```

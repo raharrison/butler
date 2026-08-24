@@ -525,4 +525,177 @@ class CliTest {
             assertTrue(stderr().contains("hello"), stderr());
         }
     }
+
+    @Nested
+    @DisplayName("runs and show")
+    class History {
+
+        /**
+         * Two jobs and a state directory in the temp dir, so a test can record real history.
+         */
+        private Path config() throws IOException {
+            return write("history.yaml", """
+                    settings:
+                      state_dir: %s
+                    jobs:
+                      greet:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Say hello
+                            uses: control.log
+                            message: hello ${trigger.who}
+                      broken:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Give up
+                            uses: control.fail
+                            message: |
+                              nothing works
+                              and this second line belongs only in the record
+                        on_failure:
+                          - name: Roll back
+                            uses: control.log
+                            message: rolling back
+                    """.formatted(dir.toString().replace('\\', '/')));
+        }
+
+        private String idOf(String line) {
+            String[] columns = line.trim().split("\\s+");
+            assertTrue(columns.length > 2, "not a run row: " + line);
+            return columns[2];
+        }
+
+        @Test
+        @DisplayName("a listing names every run, newest first, with the step that failed")
+        void listsNewestFirst() throws IOException {
+            Path p = config();
+            assertEquals(0, Main.run("trigger", "greet", "-c", p.toString(), "--set", "who=world"));
+            assertEquals(1, Main.run("trigger", "broken", "-c", p.toString()));
+            out.reset();
+
+            assertEquals(0, Main.run("runs", "-c", p.toString()));
+            String[] lines = stdout().stripTrailing().split("\n");
+            assertEquals(3, lines.length, stdout());
+            assertTrue(lines[0].contains("started") && lines[0].contains("id"), lines[0]);
+            assertTrue(lines[1].contains("broken") && lines[1].contains("failed"), lines[1]);
+            assertTrue(lines[1].contains("at \"Give up\": nothing works"),
+                    "the failing step and the first line of why: " + lines[1]);
+            assertFalse(lines[1].contains("second line"),
+                    "a listing is one line per run: " + lines[1]);
+            assertTrue(lines[2].contains("greet") && lines[2].contains("success"), lines[2]);
+        }
+
+        @Test
+        @DisplayName("--failed, --last and <job> narrow the listing")
+        void filters() throws IOException {
+            Path p = config();
+            Main.run("trigger", "greet", "-c", p.toString(), "--set", "who=world");
+            Main.run("trigger", "broken", "-c", p.toString());
+            Main.run("trigger", "greet", "-c", p.toString(), "--set", "who=again");
+            out.reset();
+
+            assertEquals(0, Main.run("runs", "-c", p.toString(), "--failed"));
+            assertEquals(2, stdout().stripTrailing().split("\n").length, stdout());
+            out.reset();
+
+            assertEquals(0, Main.run("runs", "greet", "-c", p.toString()));
+            assertEquals(3, stdout().stripTrailing().split("\n").length, stdout());
+            out.reset();
+
+            assertEquals(0, Main.run("runs", "-c", p.toString(), "--last", "1"));
+            assertEquals(2, stdout().stripTrailing().split("\n").length, stdout());
+        }
+
+        @Test
+        @DisplayName("--since drops what started before it")
+        void since() throws IOException {
+            Path p = config();
+            Main.run("trigger", "greet", "-c", p.toString(), "--set", "who=world");
+            out.reset();
+
+            assertEquals(0, Main.run("runs", "-c", p.toString(), "--since", "1h"));
+            assertEquals(2, stdout().stripTrailing().split("\n").length, stdout());
+            out.reset();
+
+            assertEquals(0, Main.run("runs", "-c", p.toString(), "--since", "1ms"));
+            assertEquals("no runs recorded matching those filters", stdout().strip());
+        }
+
+        @Test
+        @DisplayName("a recorded run reads back as the report the run printed at the time")
+        void showsOneRun() throws IOException {
+            Path p = config();
+            assertEquals(0, Main.run("trigger", "greet", "-c", p.toString(), "--set", "who=world"));
+            String reported = stdout();
+            out.reset();
+
+            assertEquals(0, Main.run("runs", "greet", "-c", p.toString()));
+            String id = idOf(stdout().stripTrailing().split("\n")[1]);
+            out.reset();
+
+            assertEquals(0, Main.run("show", id, "-c", p.toString()));
+            assertEquals(reported, stdout(),
+                    "history and the report printed at the time are the same rendering");
+        }
+
+        @Test
+        @DisplayName("a failed run keeps its hook section")
+        void showsHooks() throws IOException {
+            Path p = config();
+            assertEquals(1, Main.run("trigger", "broken", "-c", p.toString()));
+            out.reset();
+
+            assertEquals(0, Main.run("runs", "broken", "-c", p.toString()));
+            String id = idOf(stdout().stripTrailing().split("\n")[1]);
+            out.reset();
+
+            assertEquals(0, Main.run("show", id, "-c", p.toString()));
+            String s = stdout();
+            assertTrue(s.contains("on_failure"), s);
+            assertTrue(s.contains("Roll back"), s);
+            assertTrue(s.contains("FAILED in"), s);
+        }
+
+        @Test
+        @DisplayName("a job name where a run id belongs points at the verb that takes one")
+        void aJobIsNotARunId() throws IOException {
+            Path p = config();
+            assertEquals(1, Main.run("show", "greet", "-c", p.toString()));
+            assertTrue(stderr().contains("is a job, not a run id"), stderr());
+            assertTrue(stderr().contains("butler trigger greet"), stderr());
+        }
+
+        @Test
+        @DisplayName("an unknown id and an unknown job each say so")
+        void unknownNames() throws IOException {
+            Path p = config();
+            assertEquals(1, Main.run("show", "20260809T031407-a1b2", "-c", p.toString()));
+            assertTrue(stderr().contains("no run recorded with id"), stderr());
+            err.reset();
+
+            assertEquals(1, Main.run("runs", "greet2", "-c", p.toString()));
+            assertTrue(stderr().contains("no job named \"greet2\""), stderr());
+            assertTrue(stderr().contains("did you mean \"greet\""), stderr());
+        }
+
+        @Test
+        @DisplayName("a job that has never run says so rather than printing an empty table")
+        void nothingRecorded() throws IOException {
+            Path p = config();
+            assertEquals(0, Main.run("runs", "greet", "-c", p.toString()));
+            assertEquals("no runs recorded for greet", stdout().strip());
+        }
+
+        @Test
+        @DisplayName("a malformed filter is a usage error")
+        void badFilters() throws IOException {
+            Path p = config();
+            assertEquals(2, Main.run("runs", "-c", p.toString(), "--since", "24"));
+            assertTrue(stderr().contains("needs a unit"), stderr());
+            err.reset();
+
+            assertEquals(2, Main.run("runs", "-c", p.toString(), "--last", "0"));
+            assertTrue(stderr().contains("--last"), stderr());
+        }
+    }
 }

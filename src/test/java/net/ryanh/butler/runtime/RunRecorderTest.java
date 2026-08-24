@@ -3,12 +3,14 @@ package net.ryanh.butler.runtime;
 import net.ryanh.butler.config.model.ButlerConfig;
 import net.ryanh.butler.spi.StepResult;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -244,5 +246,121 @@ class RunRecorderTest {
                 "deploy-20260809T000100-a1b2.json",
                 "heartbeat-20260809T000030-a1b2.json"), kept);
         assertEquals(3, index().size(), "and the index keeps their lines too: " + index());
+    }
+
+    @Nested
+    @DisplayName("reading back")
+    class Reading {
+
+        @Test
+        @DisplayName("a record round-trips, so history renders as the run reported itself")
+        void recordRoundTrips() {
+            Instant started = Instant.parse("2026-08-09T03:14:07Z");
+            Run run = run(started, Run.Status.SUCCESS);
+            RunRecorder recorder = recorder();
+            recorder.record(run, KEEP_EVERYTHING);
+
+            // Whole-record equality: a field the writer drops shows up here as a difference. A
+            // run's discover entries never carry warnings, which are a plan's preflight findings,
+            // so nothing is lost by the record not holding them.
+            assertEquals(run, recorder.read(run.id()));
+        }
+
+        @Test
+        @DisplayName("a failed run keeps its hook steps, and what did not run stays unnumbered")
+        void failedRunRoundTrips() {
+            Instant started = Instant.parse("2026-08-09T03:14:07Z");
+            Run run = new Run("20260809T031407-a1b2", "api", "manual", Map.of(),
+                    Run.Status.FAILED, started, Duration.ofSeconds(3),
+                    List.of(Plan.Entry.skipped("discover", "Ask the service", "http.request",
+                                    "skipped: when is false"),
+                            new Plan.Entry("discover", 1, "Read the link", "fs.readlink",
+                                    List.of("state.deployed_version = 1.2.3"), List.of(),
+                                    null, null),
+                            Plan.Entry.failed("discover", "Probe", "http.request",
+                                    "observed nothing: connection refused")),
+                    null,
+                    List.of(new Run.Step("step", "Stage", "fs.copy", StepResult.Status.FAILED,
+                                    Duration.ofMillis(40), 3, "disk full"),
+                            new Run.Step("on_failure", "Roll back", "fs.symlink",
+                                    StepResult.Status.OK, Duration.ZERO, 1, null)),
+                    Map.of(), null, "Stage", "disk full");
+            RunRecorder recorder = recorder();
+            recorder.record(run, KEEP_EVERYTHING);
+
+            assertEquals(run, recorder.read(run.id()));
+        }
+
+        @Test
+        @DisplayName("history is every run the index carries, in the order they finished")
+        void historyIsTheIndex() {
+            RunRecorder recorder = recorder();
+            Instant first = Instant.parse("2026-08-09T03:14:07Z");
+            recorder.record(run("api", first, Run.Status.SUCCESS), KEEP_EVERYTHING);
+            recorder.record(run("web", first.plusSeconds(60), Run.Status.FAILED), KEEP_EVERYTHING);
+
+            List<RunRecorder.Summary> history = recorder.history();
+            assertEquals(2, history.size(), history.toString());
+
+            RunRecorder.Summary head = history.getFirst();
+            assertEquals("20260809T031407-a1b2", head.id());
+            assertEquals("api", head.job());
+            assertEquals("file.appeared", head.trigger());
+            assertEquals(Run.Status.SUCCESS, head.status());
+            assertEquals(first, head.startedAt());
+            assertEquals(Duration.ofSeconds(12), head.duration());
+
+            assertEquals("web", history.get(1).job());
+            assertEquals(Run.Status.FAILED, history.get(1).status());
+        }
+
+        @Test
+        @DisplayName("an index line that will not parse is skipped rather than hiding the rest")
+        void unreadableLinesAreSkipped() throws IOException {
+            RunRecorder recorder = recorder();
+            recorder.record(run(Instant.parse("2026-08-09T03:14:07Z"), Run.Status.SUCCESS),
+                    KEEP_EVERYTHING);
+
+            Path index = stateDir.resolve("runs/index.jsonl");
+            Files.write(index, List.of("not json at all", "{\"trigger\":\"manual\"}"),
+                    StandardOpenOption.APPEND);
+
+            List<RunRecorder.Summary> history = recorder.history();
+            assertEquals(1, history.size(),
+                    "the readable line survives its neighbours: " + history);
+            assertEquals("20260809T031407-a1b2", history.getFirst().id());
+        }
+
+        @Test
+        @DisplayName("no history at all is an empty list, not a failure")
+        void emptyStateDirectory() {
+            assertEquals(List.of(), recorder().history());
+        }
+
+        @Test
+        @DisplayName("an id no record answers to is null, wildcards included")
+        void unknownIdIsNull() {
+            RunRecorder recorder = recorder();
+            recorder.record(run(Instant.parse("2026-08-09T03:14:07Z"), Run.Status.SUCCESS),
+                    KEEP_EVERYTHING);
+
+            assertNull(recorder.read("20260809T031407-ffff"), "right shape, no such record");
+            assertNull(recorder.read("nonsense"), "not an id this build writes");
+            assertNull(recorder.read(null));
+            assertNull(recorder.read("20260809T031407-*"),
+                    "a glob must not reach the directory listing");
+        }
+
+        @Test
+        @DisplayName("a record pruned away is gone from the index and by id together")
+        void prunedRunsAreNotReadable() {
+            RunRecorder recorder = recorder();
+            Instant base = Instant.parse("2026-08-09T00:00:00Z");
+            write(recorder, keep(1), base, base.plusSeconds(60));
+
+            assertEquals(1, recorder.history().size());
+            assertNull(recorder.read("20260809T000000-a1b2"));
+            assertNotNull(recorder.read("20260809T000100-a1b2"));
+        }
     }
 }

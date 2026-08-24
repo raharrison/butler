@@ -158,6 +158,9 @@ jobs:
     run_retention: { count: 20 }     # 20 records, still dropped after 30d
 ```
 
+This is how far back `butler runs <job>` can see. Records outside either bound are deleted, and
+the index line naming them goes with them.
+
 ### Run lifecycle
 
 ```

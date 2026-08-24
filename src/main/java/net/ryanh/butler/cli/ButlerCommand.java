@@ -26,6 +26,8 @@ import java.util.concurrent.Callable;
                 CheckCommand.class,
                 TriggerCommand.class,
                 AdoptCommand.class,
+                RunsCommand.class,
+                ShowCommand.class,
                 StepsCommand.class,
                 // picocli's own, so completion cannot fall behind a new subcommand.
                 AutoComplete.GenerateCompletion.class

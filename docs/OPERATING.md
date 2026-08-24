@@ -223,8 +223,22 @@ means the next event looks like new work.
 
 ### `runs/`
 
-The audit trail. Each record holds the whole run, so "what happened at 3am" is answerable without
-the logs:
+The audit trail. Each record holds the whole run, so "what happened at 3am" is answerable
+without the logs:
+
+```bash
+butler runs                       # every job, newest first
+butler runs api --failed          # just this job's failures
+butler runs --since 24h --last 5  # the last five of the past day
+butler show 20260812T233759-e744  # one run in full, as it reported itself at the time
+```
+
+`butler runs` reads `index.jsonl` and `butler show` reads the one record, so both answer from
+the state directory alone with the daemon stopped. `butler show` renders through the same code
+the run printed with, so a record and the report `butler trigger` showed at the time are the
+same text.
+
+The records themselves are plain JSON, for anything those two do not answer:
 
 ```json
 {
@@ -302,16 +316,16 @@ them, at the cost of a directory listing per run.
 The two things worth alerting on are a failed run and a daemon that is not running.
 
 ```bash
-# Anything that failed, newest last.
-jq -r 'select(.status == "failed") | "\(.started_at) \(.job) \(.failed_step) \(.message)"' \
-   /var/lib/butler/runs/index.jsonl | tail -20
+butler runs --failed --since 24h     # anything that failed yesterday
+butler show <id>                     # what that one did, step by step
+```
 
+For a question those do not shape, the index is one JSON object per line:
+
+```bash
 # The last run of each job, and how it went.
 jq -rs 'group_by(.job)[] | max_by(.started_at) | "\(.job) \(.status) \(.started_at)"' \
    /var/lib/butler/runs/index.jsonl
-
-# One run in full.
-jq . /var/lib/butler/runs/2026-08-09/api-20260809T031407-a1b2.json
 
 # Runs that took longer than a minute.
 jq -r 'select(.duration_ms > 60000) | "\(.job) \(.duration) \(.id)"' \
