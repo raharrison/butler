@@ -275,20 +275,14 @@ notify:
 Every channel named gets the message. One that refuses is logged and the rest are still tried,
 because a channel being down is not a reason to lose the other copy of the news.
 
-Messages see `run.status`, `run.duration`, `run.duration_ms`, `run.failed_step`, `run.error` and
-`run.previous_status` as well as the usual namespaces. An outcome with no message template sends
-nothing.
+Messages see the [outcome half of `run.*`](#the-expression-language) as well as the usual
+namespaces. An outcome with no message template sends nothing.
 
 `recovered` is a success whose previous run failed, which is what lets a job say "it broke" once
 and "it is back" once instead of saying "it broke" every night. A job that has never run cannot
 have recovered, and a run skipped by `when:` does not count as the previous one: it did no work.
 A policy that never mentions `recovered` behaves as if the outcome did not exist, sending its
 `success:` message, so adding the key is what opts a config in.
-
-`run.duration` is elapsed time for a person to read, rounded to whole seconds with zero units
-omitted: `47s`, `20m 47s`, `1h 1s`. `run.duration_ms` is the exact figure as a number, for a
-message that wants millisecond precision or a condition that wants to compare
-(`run.duration_ms > 300000`).
 
 **A message is rendered after the hooks have run**, and a hook step registers like any other, so
 the failure message can say whether the rollback took:
@@ -824,6 +818,53 @@ fail on its second run. A dry run counts what a recursive delete would take:
                a directory holding 41 entries
 ```
 
+#### `fs.chmod`
+
+Set the mode of a path that already exists. Every step that *writes* a path already takes `mode:`,
+so this is for the ones that could not: a tree that arrived through `fs.unpack`, or a file another
+job put there.
+
+| Parameter   | Type       | Default |                                                                               |
+|-------------|------------|---------|-------------------------------------------------------------------------------|
+| `path`      | path       |         | **required**                                                                  |
+| `mode`      | text       |         | **required.** Octal, `0640` or `640`. Quote it, or YAML reads it as a number. |
+| `recursive` | true/false | `false` | Apply to everything under `path` as well, if it is a directory.               |
+
+**Outputs:** `path`, `changed` (how many paths were touched, the directory itself included).
+
+A path that is not there **fails** the step rather than quietly doing nothing, which is the
+opposite of `fs.delete`: deleting what is already gone is the outcome you asked for, and setting
+the mode of something that does not exist is a config naming the wrong path. Symlinks are not
+followed, so a link into another tree is left as the link it is.
+
+```yaml
+- uses: fs.unpack
+  from: ${trigger.path}
+  to: /srv/apps/api/releases/${trigger.version}
+- uses: fs.chmod
+  path: /srv/apps/api/releases/${trigger.version}/bin
+  mode: "0755"
+  recursive: true
+```
+
+#### `fs.chown`
+
+Set the owner, the group, or both on a path that already exists.
+
+| Parameter   | Type       | Default |                                                                 |
+|-------------|------------|---------|-----------------------------------------------------------------|
+| `path`      | path       |         | **required**                                                    |
+| `owner`     | text       |         | User name. One of `owner:` or `group:` is required.             |
+| `group`     | text       |         | Group name.                                                     |
+| `recursive` | true/false | `false` | Apply to everything under `path` as well, if it is a directory. |
+
+**Outputs:** `path`, `changed`.
+
+Naming neither an owner nor a group fails the step, since it would change nothing. A name this host
+does not know fails it too, and `--dry-run` warns about one before it does. Changing an *owner* is
+privileged on Linux, so this usually wants `run_as: root` and a sudoers grant; changing a *group*
+to one the daemon already belongs to does not.
+
 #### `fs.unpack`
 
 Unpack a tar archive into a directory, for a release that ships as a tarball rather than as one
@@ -1082,7 +1123,8 @@ no `server:`/`url:` to point elsewhere.
 
 ## The expression language
 
-A small hand-written grammar. No config-as-code escape hatch.
+A small hand-written grammar. No config-as-code escape hatch; [DESIGN.md §4](DESIGN.md) says why it
+stops where it does.
 
 ```
 expr    := or
@@ -1119,6 +1161,13 @@ becoming `"5"`.
 An unknown *path* evaluates to `null`; an unknown *namespace* is a validation error, so
 `${triger.version}` is caught at load time while `default(state.deployed_version, "0.0.0")` still
 works on a first run.
+
+`run.*` gains its outcome half - `status`, `duration`, `duration_ms`, `failed_step`, `error` - once
+the pipeline has ended, so hooks and `notify:` messages can read it and steps cannot.
+`run.duration` is elapsed time written for a person, rounded to whole seconds with zero units
+omitted (`47s`, `20m 47s`, `1h 1s`), so it is a string; `run.duration_ms` is the exact figure as a
+number, and is what a condition compares (`run.duration_ms > 300000`). `run.previous_status` is how
+the last run that did work ended, and is null until a job has run once.
 
 ### Operators
 

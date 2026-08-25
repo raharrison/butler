@@ -65,6 +65,35 @@ public final class Fs {
     }
 
     /**
+     * Warns about a mode that is not octal, so a dry run reports it rather than the fifth step of
+     * a real run. Templated, so it cannot always be judged at load time.
+     */
+    public static List<String> modeChecks(String mode) {
+        if (!named(mode)) {
+            return List.of();
+        }
+        try {
+            mode(mode);
+            return List.of();
+        } catch (IllegalArgumentException e) {
+            return List.of(e.getMessage());
+        }
+    }
+
+    /**
+     * A path and, when {@code recursive}, everything under it. Symlinks are not followed, so a
+     * link into another tree is touched as the link it is.
+     */
+    static List<Path> tree(Path path, boolean recursive) throws IOException {
+        if (!recursive || !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+            return List.of(path);
+        }
+        try (Stream<Path> walked = Files.walk(path)) {
+            return walked.toList();
+        }
+    }
+
+    /**
      * Applies an owner and a group, silently where the filesystem has no notion of either, as
      * {@link #applyMode} does. A name the host does not know, or a change it will not permit,
      * throws.

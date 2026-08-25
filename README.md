@@ -88,7 +88,7 @@ No bash, no version comparison, no "is it up yet" polling loop. When the vocabul
 - [What's available](#whats-available): [triggers](#triggers) · [steps](#steps) ·
   [notifiers](#notifiers) · [expressions](#expressions)
 - [Recipes](#recipes)
-- [Onboarding an existing host](#onboarding-an-existing-host) ·
+- [Putting it on a host](#putting-it-on-a-host) ·
   [Privileges](#privileges) · [Documentation](#documentation) · [Building](#building)
 
 ---
@@ -171,17 +171,17 @@ butler steps [<name>]                    # the registered step types and their p
 butler generate-completion               # bash/zsh completion script
 ```
 
-| Command                 | What it is for                                                                                     |
-|-------------------------|----------------------------------------------------------------------------------------------------|
-| `butler`                | The daemon. Starts a watcher per trigger and runs jobs as events arrive.                           |
-| `butler --dry-run`      | The same, reporting every firing instead of acting on it. Safe against a live host.                |
-| `butler validate`       | CI gate. Exits 1 on any error; warnings alone still exit 0.                                        |
-| `butler check`          | Answers "is that key doing what I think", with defaults filled in.                                 |
-| `butler trigger <job>`  | Run or rehearse one job now. `--set k=v` supplies or overrides a trigger fact.                     |
-| `butler adopt [<job>]`  | Install-time seeding on a host that is already serving. See [below](#onboarding-an-existing-host). |
-| `butler runs [<job>]`   | What has run and how it went, from the history under `state_dir`.                                  |
-| `butler show <id>`      | One recorded run, rendered as the report it printed at the time.                                   |
-| `butler steps [<name>]` | The vocabulary this build actually has, generated from the registry.                               |
+| Command                 | What it is for                                                                                                             |
+|-------------------------|----------------------------------------------------------------------------------------------------------------------------|
+| `butler`                | The daemon. Starts a watcher per trigger and runs jobs as events arrive.                                                   |
+| `butler --dry-run`      | The same, reporting every firing instead of acting on it. Safe against a live host.                                        |
+| `butler validate`       | CI gate. Exits 1 on any error; warnings alone still exit 0.                                                                |
+| `butler check`          | Answers "is that key doing what I think", with defaults filled in.                                                         |
+| `butler trigger <job>`  | Run or rehearse one job now. `--set k=v` supplies or overrides a trigger fact.                                             |
+| `butler adopt [<job>]`  | Install-time seeding on a host that is already serving. See [OPERATING.md](docs/OPERATING.md#onboarding-an-existing-host). |
+| `butler runs [<job>]`   | What has run and how it went, from the history under `state_dir`.                                                          |
+| `butler show <id>`      | One recorded run, rendered as the report it printed at the time.                                                           |
+| `butler steps [<name>]` | The vocabulary this build actually has, generated from the registry.                                                       |
 
 Examples:
 
@@ -197,8 +197,16 @@ butler validate -c ./butler.yaml            # any command takes --config
 butler validate -c base.yaml -c api.yaml    # several files, read as one config
 ```
 
-`--config` defaults to `/etc/butler/butler.yaml` and is on every command, so they all read the same
-config the daemon will. Exit codes are `0` ok, `1` failure or validation errors, `2` bad usage.
+| Option                  | On                                        |                                                                                       |
+|-------------------------|-------------------------------------------|---------------------------------------------------------------------------------------|
+| `-c`, `--config <file>` | every command                             | Defaults to `/etc/butler/butler.yaml`. Repeat it to read several files as one config. |
+| `--dry-run`             | every command that would change something | Report, change nothing.                                                               |
+| `--set k=v`             | `trigger`                                 | Supply or override one trigger fact. Repeatable.                                      |
+| `--failed`              | `runs`                                    | Only runs that failed.                                                                |
+| `--since <duration>`    | `runs`                                    | Only runs started within this long, e.g. `24h`.                                       |
+| `--last <n>`            | `runs`                                    | How many to show. Default 20.                                                         |
+
+Exit codes are `0` ok, `1` failure or validation errors, `2` bad usage.
 
 **Repeat `--config` to spread one config over several files.** They are read in order and merged:
 `jobs:`, `notifiers:`, `vars:` and `secrets: files:` accumulate and a name may only be defined
@@ -323,6 +331,8 @@ build you are running. Full parameter tables, defaults and outputs are in
 | `fs.prune`            | Delete all but the newest entries of a directory. Never deletes what is in use. |
 | `fs.delete`           | Delete one named path. A non-empty directory needs `recursive: true`.           |
 | `fs.unpack`           | Unpack a tar archive into a directory.                                          |
+| `fs.chmod`            | Set the mode of a path that already exists, optionally recursively.             |
+| `fs.chown`            | Set the owner or group of a path that already exists.                           |
 | `systemd.restart`     | Restart a unit, waiting for it to become active.                                |
 | `systemd.start`       | Start a unit, waiting for it to become active.                                  |
 | `systemd.stop`        | Stop a unit, waiting for it to become inactive.                                 |
@@ -524,36 +534,29 @@ A shell variable is written `$${HOME}`, since `${...}` belongs to the config.
 
 ---
 
-## Onboarding an existing host
+## Putting it on a host
 
-This is the least obvious part of operating Butler, and worth following in order.
+Butler installs as one jar, one launcher, a config and a systemd unit; the full layout, the unit
+file and the sudoers snippet are in [docs/OPERATING.md](docs/OPERATING.md#install).
 
-|   |                                                                                                                                                                                                           |
-|---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Install the jar and the launcher, and write `/etc/butler/butler.yaml`.                                                                                                                                    |
-| 2 | `butler validate` until it is clean.                                                                                                                                                                      |
-| 3 | `butler --dry-run` and **leave it for a day.** It starts every watcher, runs every `discover:` block for real and prints what each firing would do, without changing anything. Read the log.              |
-| 4 | `butler adopt` once. It runs each job's `discover:` block, records what the host is actually serving as state, and records the dedupe key of whatever artifact is already sitting in the watch directory. |
-| 5 | `systemctl enable --now butler`.                                                                                                                                                                          |
-
-Step 4 is what stops a fresh install from redeploying an application that is already running the
-right version. Step 3 is what tells you whether step 4 will do what you expect.
+On a host that is **already serving**, the order matters: validate, watch in `--dry-run` for a day,
+then `butler adopt` once before enabling the unit. `adopt` records what the host is actually running
+and the dedupe key of whatever artifact is already in the watch directory, which is what stops a
+fresh install from redeploying an application that is already on the right version. The sequence is
+in [docs/OPERATING.md](docs/OPERATING.md#onboarding-an-existing-host).
 
 ## Privileges
 
 **`shell.run` executes with the daemon's privileges, and so does anything inside a `discover:`
-block.** A `discover:` step runs even under `--dry-run` - it has to, or a dry run would report a
-decision made against stale memory.
-
-That makes the config file **as trusted as the daemon itself**. Keep it at `0640 root:butler`, put
-secrets in the environment or a separate secrets file rather than inline, and treat write access to
-it as equivalent to running commands as the `butler` user.
+block** - including under `--dry-run`, where discovery deliberately runs for real. That makes the
+config file **as trusted as the daemon itself**: keep it at `0640 root:butler`, put secrets in the
+environment or a separate secrets file rather than inline, and treat write access to it as
+equivalent to running commands as the `butler` user.
 
 Butler itself runs unprivileged. Steps that need root go through a narrow `NOPASSWD` sudoers
-allowlist, one line per unit and verb - never `systemctl *`. Only the verbs that change a unit need
-one; `is-active` and `show` are read-only and run as the daemon's own user. `butler --dry-run`
-warns when a `systemd.*` step has no matching rule, which turns a 3am failure into a dry-run
-warning. There is [a sample snippet](packaging/butler.sudoers) to copy.
+allowlist, one line per unit and verb - never `systemctl *`. `butler --dry-run` warns when a
+`systemd.*` step has no matching rule, which turns a 3am failure into a dry-run warning.
+[Details and a copyable snippet](docs/OPERATING.md#privileges).
 
 Secrets are **not redacted** from logs, captured process output or run records in v1. The guidance
 is not to echo them; see [DESIGN.md §11](docs/DESIGN.md).

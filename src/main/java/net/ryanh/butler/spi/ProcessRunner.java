@@ -10,7 +10,7 @@ import java.util.*;
  *
  * <p>On the SPI rather than in the runtime because a step may not depend on the runtime and a test
  * may not fork. The implementation the daemon installs does the draining, timeout and kill-the-tree
- * work of DESIGN.md §5.3, and applies {@code run_as:}; a test hands the step a fake and asserts on
+ * work of DESIGN.md §5.2, and applies {@code run_as:}; a test hands the step a fake and asserts on
  * the command it was given.
  */
 public interface ProcessRunner {

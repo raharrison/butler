@@ -315,7 +315,7 @@ public final class JobRunner {
     }
 
     /**
-     * The retry policy of DESIGN.md §3.4. The result carries how many tries it took, which is what
+     * The retry policy of DESIGN.md §3.3. The result carries how many tries it took, which is what
      * {@code steps.x.attempts} reports.
      */
     private Executed attempts(StepDef def, StepResolver.Ready ready, Instant deadline) {

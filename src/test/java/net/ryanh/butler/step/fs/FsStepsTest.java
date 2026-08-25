@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -772,6 +773,192 @@ class FsStepsTest {
                                     to: %s
                             """.formatted(at("nope.tar"), at("out")))
                             .steps().getFirst().warnings());
+        }
+    }
+
+    @Nested
+    @DisplayName("chmod and chown")
+    class Attributes {
+
+        private void assumePosix() {
+            assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                    "modes and ownership are not concepts on this filesystem");
+        }
+
+        private String modeOf(String name) throws IOException {
+            return PosixFilePermissions.toString(
+                    Files.getPosixFilePermissions(dir.resolve(name)));
+        }
+
+        @Test
+        @DisplayName("sets the mode of a file that is already there")
+        void chmodsOneFile() throws IOException {
+            assumePosix();
+            write("api.jar", "jar");
+
+            Run run = run("""
+                          - uses: fs.chmod
+                            path: %s
+                            mode: "0640"
+                            register: chmod
+                    """.formatted(at("api.jar")));
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+            assertEquals("rw-r-----", modeOf("api.jar"));
+        }
+
+        @Test
+        @DisplayName("recursive counts the directory and everything under it, whatever the "
+                + "filesystem does with the mode")
+        void recursiveReachesTheWholeTree() throws IOException {
+            write("release/bin/start.sh", "#!/bin/sh");
+            write("release/api.jar", "jar");
+
+            Run run = run("""
+                          - uses: fs.chmod
+                            path: %s
+                            mode: "0750"
+                            recursive: true
+                            register: chmod
+                          - uses: control.assert
+                            that: steps.chmod.changed == 4
+                          - uses: fs.chmod
+                            path: %s
+                            mode: "0750"
+                            register: shallow
+                          - uses: control.assert
+                            that: steps.shallow.changed == 1
+                    """.formatted(at("release"), at("release")));
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+        }
+
+        @Test
+        @DisplayName("recursive sets the mode on every path it reached")
+        void chmodsATree() throws IOException {
+            assumePosix();
+            write("release/bin/start.sh", "#!/bin/sh");
+            write("release/api.jar", "jar");
+
+            Run run = run("""
+                          - uses: fs.chmod
+                            path: %s
+                            mode: "0750"
+                            recursive: true
+                    """.formatted(at("release")));
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+            assertEquals("rwxr-x---", modeOf("release/api.jar"));
+            assertEquals("rwxr-x---", modeOf("release/bin/start.sh"));
+            assertEquals("rwxr-x---", modeOf("release"));
+        }
+
+        @Test
+        @DisplayName("without recursive it touches the directory and nothing in it")
+        void chmodStopsAtTheDirectory() throws IOException {
+            assumePosix();
+            write("release/api.jar", "jar");
+            Files.setPosixFilePermissions(dir.resolve("release/api.jar"),
+                    PosixFilePermissions.fromString("rw-rw-rw-"));
+
+            Run run = run("""
+                          - uses: fs.chmod
+                            path: %s
+                            mode: "0700"
+                    """.formatted(at("release")));
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+            assertEquals("rwx------", modeOf("release"));
+            assertEquals("rw-rw-rw-", modeOf("release/api.jar"), "the file was left alone");
+        }
+
+        @Test
+        @DisplayName("sets the group of a tree")
+        void chownsATree() throws IOException {
+            assumePosix();
+            write("release/api.jar", "jar");
+            String group = Files.getFileAttributeView(dir,
+                            java.nio.file.attribute.PosixFileAttributeView.class)
+                    .readAttributes().group().getName();
+
+            Run run = run("""
+                          - uses: fs.chown
+                            path: %s
+                            group: %s
+                            recursive: true
+                            register: chown
+                          - uses: control.assert
+                            that: steps.chown.changed == 2
+                    """.formatted(at("release"), group));
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+        }
+
+        @Test
+        @DisplayName("a path that is not there fails the step rather than silently doing nothing")
+        void missingPathFails() {
+            Run run = run("""
+                          - uses: fs.chmod
+                            path: %s
+                            mode: "0640"
+                    """.formatted(at("nothing.jar")));
+
+            assertEquals(Run.Status.FAILED, run.status());
+            assertTrue(run.steps().getFirst().message().contains("no such path"),
+                    run.steps().getFirst().message());
+        }
+
+        @Test
+        @DisplayName("chown with neither owner nor group would change nothing, so it is a failure")
+        void chownNeedsSomethingToSet() throws IOException {
+            write("api.jar", "jar");
+
+            Run run = run("""
+                          - uses: fs.chown
+                            path: %s
+                    """.formatted(at("api.jar")));
+
+            assertEquals(Run.Status.FAILED, run.status());
+            assertTrue(run.steps().getFirst().message().contains("needs an owner: or a group:"),
+                    run.steps().getFirst().message());
+        }
+
+        @Test
+        @DisplayName("the plan says what it would set, and how far it would reach")
+        void describesTheChange() throws IOException {
+            write("release/api.jar", "jar");
+
+            assertEquals(List.of(
+                            "would set    mode 0750 on " + at("release"),
+                            "      and everything under it: 1 entry"),
+                    plan("""
+                                  - uses: fs.chmod
+                                    path: %s
+                                    mode: "0750"
+                                    recursive: true
+                            """.formatted(at("release"))).steps().getFirst().body());
+
+            assertEquals(List.of("would set    owner app:staff on " + at("release")),
+                    plan("""
+                                  - uses: fs.chown
+                                    path: %s
+                                    owner: app
+                                    group: staff
+                            """.formatted(at("release"))).steps().getFirst().body());
+        }
+
+        @Test
+        @DisplayName("preflight catches a mode that is not octal, and a path that is not there")
+        void preflightWarns() {
+            assertEquals(List.of(
+                            "not an octal mode: \"0999\" (expected three or four octal digits, "
+                                    + "e.g. 0640)",
+                            "no such path: " + at("nothing")),
+                    plan("""
+                                  - uses: fs.chmod
+                                    path: %s
+                                    mode: "0999"
+                            """.formatted(at("nothing"))).steps().getFirst().warnings());
         }
     }
 

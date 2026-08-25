@@ -6,10 +6,11 @@ what to do when something is wrong.
 The [README](../README.md) is the guide to writing a config;
 [CONFIGURATION.md](CONFIGURATION.md) is the reference for every key.
 
-**Contents:** [Install](#install) · [The systemd unit](#the-systemd-unit) ·
-[Privileges](#privileges) · [Logging](#logging) · [The state directory](#the-state-directory) ·
-[Monitoring](#monitoring) · [Upgrading](#upgrading) · [Tuning](#tuning) ·
-[Plugins](#plugins) · [Troubleshooting](#troubleshooting)
+**Contents:** [Install](#install) · [Onboarding an existing host](#onboarding-an-existing-host) ·
+[The systemd unit](#the-systemd-unit) · [Privileges](#privileges) · [Logging](#logging) ·
+[The state directory](#the-state-directory) · [Monitoring](#monitoring) · [Upgrading](#upgrading) ·
+[Tuning](#tuning) · [Shell completion](#shell-completion) · [Plugins](#plugins) ·
+[Troubleshooting](#troubleshooting)
 
 ---
 
@@ -35,15 +36,29 @@ sudo install -D -m0640 -o root -g butler butler.yaml /etc/butler/butler.yaml
 sudo install -D -m0644 packaging/butler.service /etc/systemd/system/butler.service
 ```
 
-Then, before enabling it, work through the onboarding sequence in the
-[README](../README.md#onboarding-an-existing-host): validate, watch in `--dry-run` for a day, then
-`butler adopt` once. On a host that is already serving, `adopt` is what stops the first event from
-redeploying an application that is already running the right version.
-
 The launcher honours `BUTLER_JAR` and `BUTLER_JAVA_OPTS` if you need to point it somewhere else or
 give the JVM a heap ceiling.
 
 Butler needs a JRE 25 and nothing else. It writes only its state directory.
+
+### Onboarding an existing host
+
+Do not enable the unit yet. On a host that is already serving, this order is what stops the first
+event from redeploying an application that is already running the right version.
+
+|   |                                        |                                                                                                                                                                                         |
+|---|----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1 | `butler validate`                      | Until it is clean. Repeat after every config edit; it costs nothing and catches every problem at once.                                                                                  |
+| 2 | `butler trigger <job> --dry-run`       | Read the plan for each job. This is the authoring loop, and it resolves every `${...}` so nothing is left to guess.                                                                     |
+| 3 | `butler --dry-run`, **left for a day** | Starts every watcher, runs every `discover:` block for real, and prints what each firing would do without changing anything. Read the log.                                              |
+| 4 | `butler adopt`                         | Once. Runs each job's `discover:` block, records what the host is actually serving as state, and records the dedupe key of whatever artifact is already sitting in the watch directory. |
+| 5 | `systemctl enable --now butler`        |                                                                                                                                                                                         |
+
+Step 4 is the one that matters and the one that is easy to skip. Step 3 is what tells you whether
+step 4 will do what you expect.
+
+On a **fresh** host with nothing deployed, steps 3 and 4 are optional: there is nothing to adopt,
+and the first event is meant to deploy.
 
 ## The systemd unit
 
@@ -96,9 +111,9 @@ sudo systemctl enable --now butler
 journalctl -u butler -f
 ```
 
-**Config changes require a restart.** There is no `SIGHUP` reload: a restart is a few seconds of not
-watching, and the first event after it is judged against observed reality rather than against
-whatever the old config believed.
+**Config changes require a restart.** There is no `SIGHUP` reload, and the restart is safe:
+validate first, then `systemctl restart butler`. Why there is no reload is in
+[DESIGN.md §10.3](DESIGN.md).
 
 ## Privileges
 

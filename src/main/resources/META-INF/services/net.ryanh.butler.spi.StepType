@@ -17,6 +17,8 @@ net.ryanh.butler.step.fs.TemplateStep
 net.ryanh.butler.step.fs.PruneStep
 net.ryanh.butler.step.fs.DeleteStep
 net.ryanh.butler.step.fs.UnpackStep
+net.ryanh.butler.step.fs.ChmodStep
+net.ryanh.butler.step.fs.ChownStep
 net.ryanh.butler.step.systemd.RestartStep
 net.ryanh.butler.step.systemd.StartStep
 net.ryanh.butler.step.systemd.StopStep

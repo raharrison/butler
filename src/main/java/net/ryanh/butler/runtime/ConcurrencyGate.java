@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Serialises runs within a concurrency group (DESIGN.md §5.4).
+ * Serialises runs within a concurrency group (DESIGN.md §5.3).
  *
  * <p>Entered before the global {@code max_concurrent_runs} permit, so an event waiting its turn in
  * a group does not occupy a slot another job could be using.

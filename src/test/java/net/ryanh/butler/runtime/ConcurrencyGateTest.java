@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * The concurrency policy of DESIGN.md §5.4: which event gets the group, and what the ones that do
+ * The concurrency policy of DESIGN.md §5.3: which event gets the group, and what the ones that do
  * not are told.
  *
  * <p>Platform threads, because these assertions turn on {@link Thread#getState()} reporting a

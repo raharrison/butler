@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The {@link ProcessRunner} the daemon installs (DESIGN.md §5.3).
+ * The {@link ProcessRunner} the daemon installs (DESIGN.md §5.2).
  *
  * <p>Output is drained on separate threads, because a full pipe blocks the child forever; into a
  * bounded buffer, because a chatty process would otherwise exhaust memory; and a timeout kills the

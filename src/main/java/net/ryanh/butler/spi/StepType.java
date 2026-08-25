@@ -44,7 +44,7 @@ public interface StepType<C> {
 
     /**
      * Parameters the step cannot run without, so {@code butler validate} refuses a config missing
-     * one rather than leaving it to fail at 3am on the fifth step (DESIGN.md §1.6).
+     * one rather than leaving it to fail at 3am on the fifth step (DESIGN.md §1).
      *
      * <p>Presence is all that is checked; the value may be a {@code ${...}} only a run resolves.
      * A step still guards them in {@link #execute}, where subtler rules - {@code fs.template}

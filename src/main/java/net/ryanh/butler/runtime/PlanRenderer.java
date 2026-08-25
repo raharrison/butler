@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Renders a {@link Plan} as the dry-run report of DESIGN.md §5.5.
+ * Renders a {@link Plan} as the dry-run report of DESIGN.md §5.4.
  *
  * <p>The output is deterministic: nothing that varies between runs of the same config reaches it,
  * so the rendered plan can be snapshot-tested as a golden file. It is plain ASCII, because a plan
