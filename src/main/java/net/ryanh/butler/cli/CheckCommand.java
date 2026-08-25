@@ -58,6 +58,7 @@ public final class CheckCommand implements Callable<Integer> {
         kv(sb, 1, "max_concurrent_runs", s.maxConcurrentRuns());
         kv(sb, 1, "poll_interval", Durations.format(s.pollInterval()));
         kv(sb, 1, "shutdown_grace", Durations.format(s.shutdownGrace()));
+        kv(sb, 1, "default_job_timeout", Durations.format(s.defaultJobTimeout()));
         kv(sb, 1, "run_retention", "count=" + s.runRetention().count()
                 + " age=" + Durations.format(s.runRetention().age()));
         if (s.pluginsDir() != null) {
@@ -85,11 +86,13 @@ public final class CheckCommand implements Callable<Integer> {
         }
 
         sb.append("jobs:\n");
-        c.jobs().forEach((name, job) -> renderJob(sb, job, c.retentionFor(job)));
+        c.jobs().forEach((name, job) ->
+                renderJob(sb, job, c.retentionFor(job), c.timeoutFor(job)));
         return sb.toString();
     }
 
-    private static void renderJob(StringBuilder sb, JobDef job, ButlerConfig.RunRetention keep) {
+    private static void renderJob(StringBuilder sb, JobDef job, ButlerConfig.RunRetention keep,
+                                  Duration timeout) {
         indent(sb, 1).append(job.name()).append(":\n");
         if (job.description() != null) {
             kv(sb, 2, "description", job.description());
@@ -110,9 +113,7 @@ public final class CheckCommand implements Callable<Integer> {
         kv(sb, 2, "concurrency", "group=" + conc.group()
                 + " mode=" + conc.mode().name().toLowerCase(Locale.ROOT)
                 + " queue_newest_only=" + conc.queueNewestOnly());
-        if (job.timeout() != null) {
-            kv(sb, 2, "timeout", Durations.format(job.timeout()));
-        }
+        kv(sb, 2, "timeout", Durations.format(timeout));
         kv(sb, 2, "run_retention", "count=" + keep.count() + " age=" + Durations.format(keep.age()));
         section(sb, "discover", job.discover());
         section(sb, "steps", job.steps());

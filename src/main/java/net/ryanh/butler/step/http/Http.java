@@ -9,8 +9,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -43,8 +45,31 @@ final class Http {
     private Http() {
     }
 
-    static HttpResponse<String> send(String url, String method, Map<String, String> headers,
-                                     String body, Duration timeout) throws IOException {
+    /**
+     * The default cap on a response held in memory, matching {@code fs.read}'s: a body reaches
+     * the run's expressions and its run record, so both steps refuse a huge one rather than
+     * discovering how big it was after buffering it.
+     */
+    static final long MAX_BYTES = 1024 * 1024;
+
+    /**
+     * A response too big to hold. Distinct from an ordinary {@link IOException} because a poll
+     * treats a refused connection as a service still starting, and this is a mistake instead.
+     */
+    static final class TooLarge extends IOException {
+        TooLarge(long maxBytes) {
+            super("the response body is over the max_bytes of " + maxBytes);
+        }
+    }
+
+    /**
+     * A response whose body has been read, which is what an expression sees.
+     */
+    record Body(int status, HttpHeaders headers, String text) {
+    }
+
+    static Body send(String url, String method, Map<String, String> headers, String body,
+                     Duration timeout, long maxBytes) throws IOException {
         HttpRequest.BodyPublisher publisher = body == null || body.isEmpty()
                 ? HttpRequest.BodyPublishers.noBody()
                 : HttpRequest.BodyPublishers.ofString(body);
@@ -54,12 +79,41 @@ final class Http {
                 .method(method.toUpperCase(Locale.ROOT), publisher);
         headers.forEach(request::header);
 
+        HttpResponse<InputStream> response;
         try {
-            return CLIENT.send(request.build(), HttpResponse.BodyHandlers.ofString());
+            response = CLIENT.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("the request was interrupted", e);
         }
+        // One byte past the cap, so a body exactly at it still reads and a bigger one is known to
+        // be bigger without the rest of it ever arriving.
+        try (InputStream in = response.body()) {
+            byte[] bytes = in.readNBytes((int) Math.min(maxBytes + 1, Integer.MAX_VALUE));
+            if (bytes.length > maxBytes) {
+                throw new TooLarge(maxBytes);
+            }
+            return new Body(response.statusCode(), response.headers(),
+                    new String(bytes, charset(response.headers())));
+        }
+    }
+
+    /**
+     * What the server said it encoded in, since reading a latin-1 page as UTF-8 mangles it.
+     */
+    private static Charset charset(HttpHeaders headers) {
+        String contentType = headers.firstValue("content-type").orElse("");
+        for (String part : contentType.split(";")) {
+            String trimmed = part.strip();
+            if (trimmed.regionMatches(true, 0, "charset=", 0, 8)) {
+                try {
+                    return Charset.forName(trimmed.substring(8).strip().replace("\"", ""));
+                } catch (RuntimeException e) {
+                    return StandardCharsets.UTF_8;
+                }
+            }
+        }
+        return StandardCharsets.UTF_8;
     }
 
     /**
@@ -166,19 +220,19 @@ final class Http {
      * {@code status}, {@code headers}, {@code body}, and {@code json} where the body parses as
      * one.
      */
-    static Map<String, Object> facts(HttpResponse<String> response) {
+    static Map<String, Object> facts(Body response) {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", (long) response.statusCode());
+        out.put("status", (long) response.status());
         out.put("headers", headers(response));
-        out.put("body", response.body());
-        out.put("json", json(response.body()));
+        out.put("body", response.text());
+        out.put("json", json(response.text()));
         return out;
     }
 
     /**
      * Names lowercased, so a config need not guess the case the server chose.
      */
-    private static Map<String, String> headers(HttpResponse<String> response) {
+    private static Map<String, String> headers(Body response) {
         Map<String, String> out = new LinkedHashMap<>();
         response.headers().map().forEach((name, values) -> {
             if (!values.isEmpty()) {

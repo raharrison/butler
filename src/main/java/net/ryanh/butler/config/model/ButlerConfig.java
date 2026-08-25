@@ -25,12 +25,21 @@ public record ButlerConfig(
         return job.runRetention().or(settings.runRetention());
     }
 
+    /**
+     * How long one job may take: its own {@code timeout:}, or the daemon-wide default. Every run
+     * is bounded, because an unbounded one holds a concurrency permit for as long as it hangs.
+     */
+    public Duration timeoutFor(JobDef job) {
+        return job.timeout() == null ? settings.defaultJobTimeout() : job.timeout();
+    }
+
     public record Settings(
             Path stateDir,
             Enums.LogFormat logFormat,
             int maxConcurrentRuns,
             Duration pollInterval,
             Duration shutdownGrace,
+            Duration defaultJobTimeout,
             RunRetention runRetention,
             Path pluginsDir) {
 
@@ -41,6 +50,7 @@ public record ButlerConfig(
                     4,
                     Duration.ofSeconds(5),
                     Duration.ofMinutes(2),
+                    Duration.ofHours(1),
                     new RunRetention(200, Duration.ofDays(30)),
                     null);
         }

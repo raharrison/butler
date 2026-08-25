@@ -62,6 +62,7 @@ in, with that file's line and column.
 | `max_concurrent_runs` | `4`                      | Global bound on runs in flight, across all jobs. At least 1.                                         |
 | `poll_interval`       | `5s`                     | Default polling interval for polling triggers. Must be more than zero.                               |
 | `shutdown_grace`      | `2m`                     | How long a shutdown lets in-flight runs finish before cancelling them.                               |
+| `default_job_timeout` | `1h`                     | How long a job may run when it sets no `timeout:` of its own. Must be more than zero.                |
 | `run_retention`       | `{count: 200, age: 30d}` | Default run history per job. Both apply: whichever drops a record first wins. A job may override it. |
 | `plugins_dir`         | none                     | Directory of jars holding third-party steps, triggers or notifiers.                                  |
 
@@ -125,21 +126,21 @@ A channel that refuses a message is logged; it never fails a run that otherwise 
 
 ## Jobs
 
-| Key                                    |          | Meaning                                                             |
-|----------------------------------------|----------|---------------------------------------------------------------------|
-| `on`                                   | required | List of triggers.                                                   |
-| `steps`                                | required | The pipeline.                                                       |
-| `description`                          |          | Free text, shown by `butler check`.                                 |
-| `vars`                                 |          | Job-local vars, merged over the global ones.                        |
-| `env`                                  |          | Environment applied to every process-backed step in the job.        |
-| `discover`                             |          | Observation steps that populate `state.*`, run before `when:`.      |
-| `when`                                 |          | Run only if true, evaluated after `discover:`.                      |
-| `concurrency`                          |          | `group`, `mode`, `queue_newest_only`.                               |
-| `timeout`                              |          | Whole-run limit. Exceeding it fails the run.                        |
-| `on_failure` / `on_success` / `always` |          | Lifecycle hooks.                                                    |
-| `persist`                              |          | State keys written after a successful run.                          |
-| `notify`                               |          | `to`, `on: [success, failure]`, and a message template per outcome. |
-| `run_retention`                        |          | `count`, `age`. Overrides `settings.run_retention` for this job.    |
+| Key                                    |          | Meaning                                                                                  |
+|----------------------------------------|----------|------------------------------------------------------------------------------------------|
+| `on`                                   | required | List of triggers.                                                                        |
+| `steps`                                | required | The pipeline.                                                                            |
+| `description`                          |          | Free text, shown by `butler check`.                                                      |
+| `vars`                                 |          | Job-local vars, merged over the global ones.                                             |
+| `env`                                  |          | Environment applied to every process-backed step in the job.                             |
+| `discover`                             |          | Observation steps that populate `state.*`, run before `when:`.                           |
+| `when`                                 |          | Run only if true, evaluated after `discover:`.                                           |
+| `concurrency`                          |          | `group`, `mode`, `queue_newest_only`.                                                    |
+| `timeout`                              |          | Whole-run limit. Exceeding it fails the run. Defaults to `settings.default_job_timeout`. |
+| `on_failure` / `on_success` / `always` |          | Lifecycle hooks.                                                                         |
+| `persist`                              |          | State keys written after a successful run.                                               |
+| `notify`                               |          | `to`, `on: [success, failure]`, and a message template per outcome.                      |
+| `run_retention`                        |          | `count`, `age`. Overrides `settings.run_retention` for this job.                         |
 
 A job with only `on:` and `steps:` is valid, and that is the floor the DSL stays usable at.
 
@@ -352,6 +353,11 @@ render as nothing.
 
 A step's own `timeout:` and the job's `timeout:` are not two racing mechanisms: the job's is a
 deadline that caps what each step is given, so a job with five minutes left never hands a step ten.
+
+Every run is bounded. A job that names no `timeout:` gets `settings.default_job_timeout`, `1h` by
+default, because a run holds its concurrency group and one of the `max_concurrent_runs` permits
+until it ends: `max_concurrent_runs` hung jobs stop the daemon doing anything else. A job that
+legitimately takes longer says so with its own `timeout:`.
 
 ### Results
 
@@ -917,33 +923,35 @@ body parses as JSON. A body that is not JSON leaves `json` null rather than fail
 Make one HTTP request and report the response. The request is given whatever the step's own
 `timeout:` allows, so there is one timeout to set rather than two that can disagree.
 
-| Parameter       | Type            | Default |                                            |
-|-----------------|-----------------|---------|--------------------------------------------|
-| `url`           | text            |         | **required**                               |
-| `method`        | text            | `GET`   |                                            |
-| `headers`       | mapping         | none    |                                            |
-| `body`          | text            | none    |                                            |
-| `expect_status` | list of numbers | any 2xx | One value or a list: `expect_status: 200`. |
+| Parameter       | Type            | Default   |                                                                                       |
+|-----------------|-----------------|-----------|---------------------------------------------------------------------------------------|
+| `url`           | text            |           | **required**                                                                          |
+| `method`        | text            | `GET`     |                                                                                       |
+| `headers`       | mapping         | none      |                                                                                       |
+| `body`          | text            | none      |                                                                                       |
+| `expect_status` | list of numbers | any 2xx   | One value or a list: `expect_status: 200`.                                            |
+| `max_bytes`     | number          | `1048576` | Refuse a larger response, since the body reaches the run's memory and its run record. |
 
 #### `http.wait`
 
 Poll a URL until `until:` holds, and fail when it runs out of time.
 
-| Parameter  | Type        | Default |                                                                                    |
-|------------|-------------|---------|------------------------------------------------------------------------------------|
-| `url`      | text        |         | **required**                                                                       |
-| `until`    | *condition* |         | **required.** Sees `status`, `headers`, `body` and `json` for the probe in flight. |
-| `interval` | duration    | `2s`    |                                                                                    |
-| `method`   | text        | `GET`   |                                                                                    |
-| `headers`  | mapping     | none    |                                                                                    |
+| Parameter   | Type        | Default   |                                                                                                                                 |
+|-------------|-------------|-----------|---------------------------------------------------------------------------------------------------------------------------------|
+| `url`       | text        |           | **required**                                                                                                                    |
+| `until`     | *condition* |           | **required.** Sees `status`, `headers`, `body` and `json` for the probe in flight.                                              |
+| `interval`  | duration    | `2s`      |                                                                                                                                 |
+| `method`    | text        | `GET`     |                                                                                                                                 |
+| `headers`   | mapping     | none      |                                                                                                                                 |
+| `max_bytes` | number      | `1048576` | Refuse a larger response. A probe that hits it fails the step rather than polling on, since waiting cannot make a body smaller. |
 
 **Outputs:** the four above, plus `probes` and `elapsed`.
 
 There is no timeout parameter: the step's reserved `timeout:` is the limit, and the step turns being
 cut off into an account of how far it got - probes, elapsed, last status and body. A refused
 connection is a probe that did not hold rather than a failure, because that is what a service being
-restarted looks like. With no `timeout:` it would poll for as long as it takes, which `--dry-run`
-warns about.
+restarted looks like. With no `timeout:` it polls until the job's own runs out, which fails the
+whole run rather than this step; `--dry-run` warns about that.
 
 #### `http.download`
 

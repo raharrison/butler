@@ -358,14 +358,15 @@ empty rather than refusing to start.
 
 ## Tuning
 
-| Setting                | When to change it                                                                                                                                      |
-|------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `poll_interval`        | The cadence of every polling trigger. `5s` on one directory costs nothing; raise it for a network filesystem.                                          |
-| `settle` (per trigger) | Raise it if artifacts arrive slowly. Too low deploys a half-uploaded file, which settle exists to prevent.                                             |
-| `max_concurrent_runs`  | Total runs in flight across all jobs. Raise it only if separate jobs genuinely need to overlap; within a job the concurrency group already serialises. |
-| `shutdown_grace`       | Raise it, and `TimeoutStopSec` with it, if a deploy legitimately takes longer than 2 minutes.                                                          |
-| `run_retention`        | Count and age together, per job. Records are small; the default keeps each job 200 or 30 days.                                                         |
-| `BUTLER_JAVA_OPTS`     | A heap ceiling on a small VPS: `-Xmx128m` is ample. Butler holds one run's captured output at a time, bounded at 256KB per stream.                     |
+| Setting                | When to change it                                                                                                                                         |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `poll_interval`        | The cadence of every polling trigger. `5s` on one directory costs nothing; raise it for a network filesystem.                                             |
+| `settle` (per trigger) | Raise it if artifacts arrive slowly. Too low deploys a half-uploaded file, which settle exists to prevent.                                                |
+| `max_concurrent_runs`  | Total runs in flight across all jobs. Raise it only if separate jobs genuinely need to overlap; within a job the concurrency group already serialises.    |
+| `shutdown_grace`       | Raise it, and `TimeoutStopSec` with it, if a deploy legitimately takes longer than 2 minutes.                                                             |
+| `default_job_timeout`  | The backstop on a job that names no `timeout:`. Raise it if a pipeline legitimately runs past an hour, but prefer giving that one job its own `timeout:`. |
+| `run_retention`        | Count and age together, per job. Records are small; the default keeps each job 200 or 30 days.                                                            |
+| `BUTLER_JAVA_OPTS`     | A heap ceiling on a small VPS: `-Xmx128m` is ample. Butler holds one run's captured output at a time, bounded at 256KB per stream.                        |
 
 Threads are not a knob. One virtual thread per watcher and per run, so a hundred jobs cost a
 hundred parked threads and no pool to size.

@@ -157,6 +157,7 @@ settings:
   max_concurrent_runs: 4
   poll_interval: 5s          # default for polling triggers
   shutdown_grace: 2m         # how long a drain lets in-flight runs finish
+  default_job_timeout: 1h    # bound on a job that sets no timeout: of its own
   run_retention: { count: 200, age: 30d }
   plugins_dir: /var/lib/butler/plugins
 
@@ -289,21 +290,21 @@ one key away:
 
 The complete job schema, for reference:
 
-| Key                                    |          | Meaning                                                           |
-|----------------------------------------|----------|-------------------------------------------------------------------|
-| `on`                                   | required | list of triggers                                                  |
-| `steps`                                | required | the pipeline                                                      |
-| `description`                          |          | free text, used in logs and `butler check`                        |
-| `vars`                                 |          | job-local vars, merged over global `vars:`                        |
-| `env`                                  |          | environment applied to every process-backed step in the job       |
-| `discover`                             |          | observation steps that populate `state.*` (§6.2)                  |
-| `when`                                 |          | run only if true, evaluated after `discover`                      |
-| `concurrency`                          |          | `group`, `mode`, `queue_newest_only` (§5.4)                       |
-| `timeout`                              |          | whole-run limit; exceeding it fails the run                       |
-| `on_failure` / `on_success` / `always` |          | lifecycle hooks (§2.1)                                            |
-| `persist`                              |          | state keys written after a successful run                         |
-| `notify`                               |          | `to`, `on: [success, failure]`, and per-outcome message templates |
-| `run_retention`                        |          | `count`, `age`; overrides `settings.run_retention` (§6.4)         |
+| Key                                    |          | Meaning                                                                                 |
+|----------------------------------------|----------|-----------------------------------------------------------------------------------------|
+| `on`                                   | required | list of triggers                                                                        |
+| `steps`                                | required | the pipeline                                                                            |
+| `description`                          |          | free text, used in logs and `butler check`                                              |
+| `vars`                                 |          | job-local vars, merged over global `vars:`                                              |
+| `env`                                  |          | environment applied to every process-backed step in the job                             |
+| `discover`                             |          | observation steps that populate `state.*` (§6.2)                                        |
+| `when`                                 |          | run only if true, evaluated after `discover`                                            |
+| `concurrency`                          |          | `group`, `mode`, `queue_newest_only` (§5.4)                                             |
+| `timeout`                              |          | whole-run limit; exceeding it fails the run. Defaults to `settings.default_job_timeout` |
+| `on_failure` / `on_success` / `always` |          | lifecycle hooks (§2.1)                                                                  |
+| `persist`                              |          | state keys written after a successful run                                               |
+| `notify`                               |          | `to`, `on: [success, failure]`, and per-outcome message templates                       |
+| `run_retention`                        |          | `count`, `age`; overrides `settings.run_retention` (§6.4)                               |
 
 Everything except `on` and `steps` is optional, and a job with only those two is valid - that
 is the floor the DSL should stay usable at.
@@ -475,6 +476,12 @@ blocks on a process, a sleep or a socket, and a plugin that does not is reported
 abandoned step goes on holding its view of the `Context` while the run that moved on writes to it,
 so `vars`, `steps` and `state` are synchronized maps: not to make anything it does meaningful, but
 so a read from the thread nobody is waiting for cannot catch a map mid-resize.
+
+**Every run is bounded.** A job that names no `timeout:` inherits `settings.default_job_timeout`,
+which is `1h` unless the config says otherwise, so there is always a deadline. That is not
+politeness: a run holds its concurrency group and one of the `max_concurrent_runs` permits for as
+long as it lasts, so `max_concurrent_runs` hung jobs stop the daemon doing anything else. A job
+that legitimately takes longer raises its own `timeout:`, which is the visible place to say so.
 
 A step that turns its interrupt into a result of its own keeps it. That is how a killed process
 still reports what it printed: the runtime supplies the "timed out after 30s" message and the step

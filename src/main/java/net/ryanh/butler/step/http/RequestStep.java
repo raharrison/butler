@@ -6,7 +6,6 @@ import net.ryanh.butler.spi.StepType;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpResponse;
 import java.util.*;
 
 /**
@@ -19,14 +18,17 @@ public final class RequestStep implements StepType<RequestStep.Config> {
 
     /**
      * @param expectStatus statuses to treat as success; any 2xx when the config says nothing
+     * @param maxBytes     refuse a response larger than this, since the body reaches the run's
+     *                     memory and its run record
      */
     public record Config(String url, String method, Map<String, String> headers, String body,
-                         List<Integer> expectStatus) {
+                         List<Integer> expectStatus, Long maxBytes) {
         public Config {
             method = method == null || method.isBlank() ? "GET" : method;
             headers = headers == null ? Map.of()
                     : Collections.unmodifiableMap(new LinkedHashMap<>(headers));
             expectStatus = expectStatus == null ? List.of() : List.copyOf(expectStatus);
+            maxBytes = maxBytes == null ? Http.MAX_BYTES : maxBytes;
         }
     }
 
@@ -60,21 +62,21 @@ public final class RequestStep implements StepType<RequestStep.Config> {
         if (c.url() == null || c.url().isBlank()) {
             return StepResult.failed("http.request needs a url:");
         }
-        HttpResponse<String> response = Http.send(c.url(), c.method(), c.headers(), c.body(),
-                ctx.command().timeout());
+        Http.Body response = Http.send(c.url(), c.method(), c.headers(), c.body(),
+                ctx.command().timeout(), c.maxBytes());
         Map<String, Object> facts = Http.facts(response);
 
-        StepResult result = Http.acceptable(response.statusCode(), c.expectStatus())
+        StepResult result = Http.acceptable(response.status(), c.expectStatus())
                 ? StepResult.ok()
                 : StepResult.failed(c.method().toUpperCase(Locale.ROOT) + " " + c.url()
-                                    + " answered " + response.statusCode() + ", expected "
+                                    + " answered " + response.status() + ", expected "
                                     + Http.expectation(c.expectStatus())
                                     + excerpt(response));
         return result.outputs(facts);
     }
 
-    private static String excerpt(HttpResponse<String> response) {
-        String excerpt = Http.excerpt(response.body());
+    private static String excerpt(Http.Body response) {
+        String excerpt = Http.excerpt(response.text());
         return excerpt.isEmpty() ? "" : ": " + excerpt;
     }
 

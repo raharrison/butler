@@ -581,6 +581,46 @@ class JobRunnerTest {
                     "on_failure: gets to clean up after a job timeout, so it cannot be held to a "
                             + "deadline that has already passed");
         }
+
+        @Test
+        @DisplayName("a job with no timeout: is bounded by settings.default_job_timeout")
+        void defaultJobTimeoutBoundsAJobThatSetsNone() {
+            Run run = run("""
+                    settings:
+                      default_job_timeout: 200ms
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Slow
+                            uses: control.sleep
+                            duration: 30s
+                    """, "j");
+
+            assertEquals(Run.Status.FAILED, run.status());
+            assertEquals("the job's timeout of 200ms was exceeded", run.message(),
+                    "the inherited default is reported as the job's own timeout, because that "
+                            + "is what it is");
+        }
+
+        @Test
+        @DisplayName("a job's own timeout: wins over the default")
+        void anExplicitJobTimeoutWinsOverTheDefault() {
+            Run run = run("""
+                    settings:
+                      default_job_timeout: 1ms
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        timeout: 30s
+                        steps:
+                          - name: Quick
+                            uses: control.log
+                            message: hi
+                    """, "j");
+
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+        }
     }
 
     @Nested

@@ -219,6 +219,7 @@ settings: # all optional, defaults shown
   max_concurrent_runs: 4         # global bound on runs in flight
   poll_interval: 5s              # default cadence for polling triggers
   shutdown_grace: 2m             # how long a drain lets in-flight runs finish
+  default_job_timeout: 1h        # bound on a job that sets no timeout: of its own
   run_retention: { count: 200, age: 30d }  # per job; a job may override it
   plugins_dir: /var/lib/butler/plugins     # jars of third-party steps
 

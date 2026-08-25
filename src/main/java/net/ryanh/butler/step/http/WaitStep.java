@@ -7,7 +7,6 @@ import net.ryanh.butler.util.Durations;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -21,13 +20,18 @@ import java.util.*;
  */
 public final class WaitStep implements StepType<WaitStep.Config> {
 
+    /**
+     * @param maxBytes refuse a response larger than this, since every probe's body reaches the
+     *                 run's memory
+     */
     public record Config(String url, String method, Map<String, String> headers, String until,
-                         Duration interval) {
+                         Duration interval, Long maxBytes) {
         public Config {
             method = method == null || method.isBlank() ? "GET" : method;
             headers = headers == null ? Map.of()
                     : Collections.unmodifiableMap(new LinkedHashMap<>(headers));
             interval = interval == null ? Duration.ofSeconds(2) : interval;
+            maxBytes = maxBytes == null ? Http.MAX_BYTES : maxBytes;
         }
     }
 
@@ -74,7 +78,12 @@ public final class WaitStep implements StepType<WaitStep.Config> {
         int probes = 0;
         while (true) {
             probes++;
-            Probe last = probe(c, ctx);
+            Probe last;
+            try {
+                last = probe(c, ctx);
+            } catch (Http.TooLarge e) {
+                return StepResult.failed(c.url() + ": " + e.getMessage());
+            }
             if (last.satisfied()) {
                 return last.result()
                         .output("probes", (long) probes)
@@ -105,12 +114,14 @@ public final class WaitStep implements StepType<WaitStep.Config> {
                 ? c.interval() : Http.DEFAULT_TIMEOUT;
     }
 
-    private Probe probe(Config c, RunContext ctx) {
+    private Probe probe(Config c, RunContext ctx) throws Http.TooLarge {
         Map<String, Object> facts;
         try {
-            HttpResponse<String> response = Http.send(c.url(), c.method(), c.headers(), null,
-                    probeTimeout(c));
-            facts = Http.facts(response);
+            facts = Http.facts(Http.send(c.url(), c.method(), c.headers(), null,
+                    probeTimeout(c), c.maxBytes()));
+        } catch (Http.TooLarge e) {
+            // Polling cannot make an oversized body smaller, so this ends the step.
+            throw e;
         } catch (IOException e) {
             // A service being restarted refuses connections, so this is a probe that did not
             // hold rather than a failure.
@@ -176,8 +187,8 @@ public final class WaitStep implements StepType<WaitStep.Config> {
             }
         }
         if (ctx.command().timeout() == null) {
-            warnings.add("no timeout: this would poll until the condition holds, however long "
-                    + "that takes. Give the step a timeout: or the job one");
+            warnings.add("no timeout: this would poll until the job's runs out, which fails the "
+                    + "whole run rather than this step. Give the step a timeout:");
         }
         return List.copyOf(warnings);
     }

@@ -202,6 +202,20 @@ class DiagnosticsTest {
         }
 
         @Test
+        @DisplayName("a zero default_job_timeout would time out every run before its first step")
+        void defaultJobTimeoutMustBePositive() {
+            var d = only("""
+                    settings:
+                      default_job_timeout: 0s
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            assertAt(d, 2, "must be more than zero");
+        }
+
+        @Test
         @DisplayName("a negative retention count would delete every run record ever written")
         void retentionCountMustNotBeNegative() {
             var d = only("""

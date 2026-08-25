@@ -8,6 +8,7 @@ import net.ryanh.butler.expr.ExprException;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.spi.StepResult;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -33,7 +34,8 @@ public final class PlanBuilder {
         Context ctx = Context.forPlan(env, job, event, persisted.values());
 
         // Discovery runs for real, so it is held to the deadline the run would hold it to.
-        Instant deadline = job.timeout() == null ? null : Instant.now().plus(job.timeout());
+        Duration timeout = env.config().timeoutFor(job);
+        Instant deadline = timeout == null ? null : Instant.now().plus(timeout);
         List<Plan.Entry> discover = Discovery.run(job, env.steps(), ctx, deadline);
         Plan.Decision when = decide(job, ctx, diags);
 

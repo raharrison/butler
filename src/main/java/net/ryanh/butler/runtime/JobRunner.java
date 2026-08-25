@@ -144,7 +144,8 @@ public final class JobRunner {
     private Run execute(JobDef job, Event event, String id, Instant started,
                         StateStore.JobState persisted) {
         Context ctx = Context.forRun(env, job, event, persisted.values(), id, started);
-        Instant deadline = job.timeout() == null ? null : started.plus(job.timeout());
+        Duration timeout = env.config().timeoutFor(job);
+        Instant deadline = timeout == null ? null : started.plus(timeout);
 
         List<Plan.Entry> discovered = cancel.isCancelled()
                 ? List.of()
@@ -260,8 +261,8 @@ public final class JobRunner {
      * step it stopped at is named, because that is what a notification template asks for.
      */
     private Outcome timedOut(JobDef job, String step) {
-        String message = "the job's timeout of " + Durations.format(job.timeout())
-                + " was exceeded";
+        String message = "the job's timeout of "
+                + Durations.format(env.config().timeoutFor(job)) + " was exceeded";
         log.error(message);
         return new Outcome(Run.Status.FAILED, step, message);
     }

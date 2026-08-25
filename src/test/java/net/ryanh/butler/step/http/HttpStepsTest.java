@@ -231,15 +231,62 @@ class HttpStepsTest {
     }
 
     @Test
-    @DisplayName("preflight warns about a poll with no timeout, which would never end")
+    @DisplayName("preflight warns about a poll with no timeout, which takes the run down with it")
     void preflightWarnsAboutAnEndlessPoll() {
-        assertEquals(List.of("no timeout: this would poll until the condition holds, however long "
-                        + "that takes. Give the step a timeout: or the job one"),
+        assertEquals(List.of("no timeout: this would poll until the job's runs out, which fails "
+                        + "the whole run rather than this step. Give the step a timeout:"),
                 plan("""
                               - uses: http.wait
                                 url: http://localhost:8080/health
                                 until: status == 200
                         """).steps().getFirst().warnings());
+    }
+
+    @Test
+    @DisplayName("a response over max_bytes fails the step rather than reaching the run record")
+    void refusesAnOversizedBody() {
+        try (StubServer server = StubServer.serving(200, "x".repeat(100))) {
+            Run run = run("""
+                          - uses: http.request
+                            url: %s
+                            max_bytes: 10
+                    """.formatted(server.url("/big")));
+            assertEquals(Run.Status.FAILED, run.status());
+            assertTrue(run.message().contains("over the max_bytes of 10"), run.message());
+        }
+    }
+
+    @Test
+    @DisplayName("a body exactly at max_bytes still reads, so the cap is a limit and not a margin")
+    void readsABodyExactlyAtTheCap() {
+        try (StubServer server = StubServer.serving(200, "0123456789")) {
+            Run run = run("""
+                          - uses: http.request
+                            url: %s
+                            max_bytes: 10
+                            register: r
+                          - uses: control.assert
+                            that: steps.r.body == "0123456789"
+                    """.formatted(server.url("/exact")));
+            assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+        }
+    }
+
+    @Test
+    @DisplayName("a poll gives up on an oversized body, since polling cannot make it smaller")
+    void pollRefusesAnOversizedBody() {
+        try (StubServer server = StubServer.serving(200, "x".repeat(100))) {
+            Run run = run("""
+                          - uses: http.wait
+                            url: %s
+                            until: status == 200
+                            max_bytes: 10
+                            interval: 10ms
+                            timeout: 5s
+                    """.formatted(server.url("/big")));
+            assertEquals(Run.Status.FAILED, run.status());
+            assertTrue(run.message().contains("over the max_bytes of 10"), run.message());
+        }
     }
 
     /**

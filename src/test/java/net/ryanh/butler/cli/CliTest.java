@@ -255,6 +255,9 @@ class CliTest {
             assertTrue(s.contains("max_concurrent_runs: 4"), s);
             assertTrue(s.contains("group=hello"), s);
             assertTrue(s.contains("poll_interval: 5s"), s);
+            assertTrue(s.contains("default_job_timeout: 1h"), s);
+            assertTrue(s.contains("timeout: 1h"),
+                    "a job that names no timeout: is still bounded, and check says by what:\n" + s);
         }
 
         @Test

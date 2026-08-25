@@ -338,6 +338,50 @@ class ConfigLoaderTest {
     }
 
     @Nested
+    @DisplayName("default_job_timeout")
+    class DefaultJobTimeout {
+
+        private static final String YAML = """
+                settings:
+                  default_job_timeout: %s
+                
+                jobs:
+                  bounded:
+                    timeout: 90s
+                    on: [{uses: manual}]
+                    steps: [{uses: control.log}]
+                  unbounded:
+                    on: [{uses: manual}]
+                    steps: [{uses: control.log}]
+                """;
+
+        @Test
+        @DisplayName("a job that sets no timeout: gets the daemon-wide one")
+        void appliesWhereTheJobSaysNothing() {
+            var r = loadAndValidate(YAML.formatted("45m"));
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertEquals(Duration.ofMinutes(45),
+                    r.config().timeoutFor(r.config().jobs().get("unbounded")));
+            assertEquals(Duration.ofSeconds(90),
+                    r.config().timeoutFor(r.config().jobs().get("bounded")),
+                    "a job that names its own timeout keeps it");
+        }
+
+        @Test
+        @DisplayName("a config that says nothing still bounds every job")
+        void builtInDefault() {
+            var r = loadAndValidate("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            assertEquals(Duration.ofHours(1),
+                    r.config().timeoutFor(r.config().jobs().get("j")));
+        }
+    }
+
+    @Nested
     @DisplayName("durations")
     class Durations {
 

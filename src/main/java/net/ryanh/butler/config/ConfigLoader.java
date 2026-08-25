@@ -320,6 +320,7 @@ public final class ConfigLoader {
         int maxRuns = c.integer("max_concurrent_runs", d.maxConcurrentRuns());
         Duration poll = c.duration("poll_interval", d.pollInterval());
         Duration grace = c.duration("shutdown_grace", d.shutdownGrace());
+        Duration jobTimeout = c.duration("default_job_timeout", d.defaultJobTimeout());
 
         ButlerConfig.RunRetention retention =
                 runRetention(c.object("run_retention")).or(d.runRetention());
@@ -335,8 +336,12 @@ public final class ConfigLoader {
             c.diagnostics().error("/settings/poll_interval",
                     "must be more than zero: a polling trigger would spin instead of sleeping");
         }
+        if (jobTimeout != null && (jobTimeout.isZero() || jobTimeout.isNegative())) {
+            c.diagnostics().error("/settings/default_job_timeout",
+                    "must be more than zero: every run would time out before its first step");
+        }
         return new ButlerConfig.Settings(
-                stateDir, logFormat, maxRuns, poll, grace, retention, plugins);
+                stateDir, logFormat, maxRuns, poll, grace, jobTimeout, retention, plugins);
     }
 
     /**
