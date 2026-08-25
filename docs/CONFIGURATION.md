@@ -126,21 +126,21 @@ A channel that refuses a message is logged; it never fails a run that otherwise 
 
 ## Jobs
 
-| Key                                    |          | Meaning                                                                                  |
-|----------------------------------------|----------|------------------------------------------------------------------------------------------|
-| `on`                                   | required | List of triggers.                                                                        |
-| `steps`                                | required | The pipeline.                                                                            |
-| `description`                          |          | Free text, shown by `butler check`.                                                      |
-| `vars`                                 |          | Job-local vars, merged over the global ones.                                             |
-| `env`                                  |          | Environment applied to every process-backed step in the job.                             |
-| `discover`                             |          | Observation steps that populate `state.*`, run before `when:`.                           |
-| `when`                                 |          | Run only if true, evaluated after `discover:`.                                           |
-| `concurrency`                          |          | `group`, `mode`, `queue_newest_only`.                                                    |
-| `timeout`                              |          | Whole-run limit. Exceeding it fails the run. Defaults to `settings.default_job_timeout`. |
-| `on_failure` / `on_success` / `always` |          | Lifecycle hooks.                                                                         |
-| `persist`                              |          | State keys written after a successful run.                                               |
-| `notify`                               |          | `to`, `on: [success, failure]`, and a message template per outcome.                      |
-| `run_retention`                        |          | `count`, `age`. Overrides `settings.run_retention` for this job.                         |
+| Key                                    |          | Meaning                                                                                                |
+|----------------------------------------|----------|--------------------------------------------------------------------------------------------------------|
+| `on`                                   | required | List of triggers.                                                                                      |
+| `steps`                                | required | The pipeline.                                                                                          |
+| `description`                          |          | Free text, shown by `butler check`.                                                                    |
+| `vars`                                 |          | Job-local vars, merged over the global ones.                                                           |
+| `env`                                  |          | Environment applied to every process-backed step in the job.                                           |
+| `discover`                             |          | Observation steps that populate `state.*`, run before `when:`.                                         |
+| `when`                                 |          | Run only if true, evaluated after `discover:`.                                                         |
+| `concurrency`                          |          | `group`, `mode`, `queue_newest_only`.                                                                  |
+| `timeout`                              |          | Whole-run limit. Exceeding it fails the run. Defaults to `settings.default_job_timeout`.               |
+| `on_failure` / `on_success` / `always` |          | Lifecycle hooks.                                                                                       |
+| `persist`                              |          | State keys written after a successful run.                                                             |
+| `notify`                               |          | `to` (one channel or a list), `on: [success, failure, recovered]`, and a message template per outcome. |
+| `run_retention`                        |          | `count`, `age`. Overrides `settings.run_retention` for this job.                                       |
 
 A job with only `on:` and `steps:` is valid, and that is the floor the DSL stays usable at.
 
@@ -265,14 +265,25 @@ mutation scattered through a pipeline is how half-written state survives a mid-r
 
 ```yaml
 notify:
-  to: ops                          # a name from the notifiers: block
-  on: [ success, failure ]         # which outcomes fire; both by default
+  to: [ ops, oncall ]              # one name from notifiers:, or a list of them
+  on: [ success, failure, recovered ]   # which outcomes fire; success and failure by default
   success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
   failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}"
+  recovered: ":white_check_mark: api is back after ${run.previous_status}"
 ```
 
-Messages see `run.status`, `run.duration`, `run.duration_ms`, `run.failed_step` and `run.error` as
-well as the usual namespaces. An outcome with no message template sends nothing.
+Every channel named gets the message. One that refuses is logged and the rest are still tried,
+because a channel being down is not a reason to lose the other copy of the news.
+
+Messages see `run.status`, `run.duration`, `run.duration_ms`, `run.failed_step`, `run.error` and
+`run.previous_status` as well as the usual namespaces. An outcome with no message template sends
+nothing.
+
+`recovered` is a success whose previous run failed, which is what lets a job say "it broke" once
+and "it is back" once instead of saying "it broke" every night. A job that has never run cannot
+have recovered, and a run skipped by `when:` does not count as the previous one: it did no work.
+A policy that never mentions `recovered` behaves as if the outcome did not exist, sending its
+`success:` message, so adding the key is what opts a config in.
 
 `run.duration` is elapsed time for a person to read, rounded to whole seconds with zero units
 omitted: `47s`, `20m 47s`, `1h 1s`. `run.duration_ms` is the exact figure as a number, for a
@@ -1094,16 +1105,16 @@ becoming `"5"`.
 
 **Namespaces**, and nothing else:
 
-|                  |                                                                                                                                          |
-|------------------|------------------------------------------------------------------------------------------------------------------------------------------|
-| `vars.*`         | global `vars:` merged with job `vars:`, then any `control.set` step                                                                      |
-| `trigger.*`      | facts from the event, including regex capture groups                                                                                     |
-| `steps.<name>.*` | results of steps that declared `register:`                                                                                               |
-| `state.*`        | persisted values, overlaid with what `discover:` observed                                                                                |
-| `env.*`          | process environment                                                                                                                      |
-| `secret.*`       | resolved secrets                                                                                                                         |
-| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; in hooks and `notify:` also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
-| `butler.*`       | `version`, `host`                                                                                                                        |
+|                  |                                                                                                                                                             |
+|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `vars.*`         | global `vars:` merged with job `vars:`, then any `control.set` step                                                                                         |
+| `trigger.*`      | facts from the event, including regex capture groups                                                                                                        |
+| `steps.<name>.*` | results of steps that declared `register:`                                                                                                                  |
+| `state.*`        | persisted values, overlaid with what `discover:` observed                                                                                                   |
+| `env.*`          | process environment                                                                                                                                         |
+| `secret.*`       | resolved secrets                                                                                                                                            |
+| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`, `previous_status`; in hooks and `notify:` also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
+| `butler.*`       | `version`, `host`                                                                                                                                           |
 
 An unknown *path* evaluates to `null`; an unknown *namespace* is a validation error, so
 `${triger.version}` is caught at load time while `default(state.deployed_version, "0.0.0")` still

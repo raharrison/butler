@@ -124,14 +124,15 @@ public final class JobRunner {
         MDC.put("run_id", id);
         MDC.put("job", job.name());
         try {
-            Context ctx = Context.forRun(env, job, event, persisted.values(), id, now);
+            Context ctx = Context.forRun(env, job, event, persisted, id, now);
             // No deadline: adopting is not a run, so a step is held only to its own timeout.
             List<Plan.Entry> discovered = Discovery.run(job, env.steps(), ctx, null);
 
             String dedupeKey = event.dedupeKey() == null
                     ? persisted.dedupeKey() : event.dedupeKey();
+            // Nothing ran, so the recorded status carries over untouched.
             StateStore.JobState state =
-                    new StateStore.JobState(dedupeKey, now, ctx.state());
+                    new StateStore.JobState(dedupeKey, now, persisted.status(), ctx.state());
             remember(job, state);
             return new Adoption(job.name(), discovered, state.values(), dedupeKey);
         } finally {
@@ -143,7 +144,7 @@ public final class JobRunner {
 
     private Run execute(JobDef job, Event event, String id, Instant started,
                         StateStore.JobState persisted) {
-        Context ctx = Context.forRun(env, job, event, persisted.values(), id, started);
+        Context ctx = Context.forRun(env, job, event, persisted, id, started);
         Duration timeout = env.config().timeoutFor(job);
         Instant deadline = timeout == null ? null : started.plus(timeout);
 
@@ -167,7 +168,8 @@ public final class JobRunner {
                 ? evaluate(job.persist(), ctx)
                 : Map.of();
         record(job, event, ctx, outcome.status(), persist, persisted);
-        Plan.Notification notification = notify(job, ctx, outcome.status());
+        Plan.Notification notification =
+                notify(job, ctx, outcome.status(), persisted.status());
 
         log.info("{} in {}", outcome.status(), Durations.format(took));
         Run run = new Run(id, job.name(), event.trigger(), event.facts(), outcome.status(), started,
@@ -422,40 +424,50 @@ public final class JobRunner {
 
     /**
      * A channel that refuses the message is logged and no more: the run has ended, and failing it
-     * now would report a deployment that worked as one that did not.
+     * now would report a deployment that worked as one that did not. One that refuses does not
+     * stop the others.
      */
-    private Plan.Notification notify(JobDef job, Context ctx, Run.Status status) {
+    private Plan.Notification notify(JobDef job, Context ctx, Run.Status status,
+                                     Run.Status previous) {
         if (job.notifyPolicy() == null) {
             return null;
         }
-        Enums.Outcome outcome = switch (status) {
-            case SUCCESS -> Enums.Outcome.SUCCESS;
-            case FAILED -> Enums.Outcome.FAILURE;
-            case SKIPPED, CANCELLED -> null;
-        };
-        if (outcome == null || !job.notifyPolicy().on().contains(outcome)) {
-            return null;
-        }
-        String template = job.notifyPolicy().messages()
-                .get(outcome.name().toLowerCase(Locale.ROOT));
+        Enums.Outcome outcome = outcomeOf(status, previous);
+        String template = outcome == null ? null : job.notifyPolicy().templateFor(outcome);
         if (template == null) {
             return null;
         }
-        String to = job.notifyPolicy().to();
+        List<String> to = job.notifyPolicy().to();
         String message = ctx.resolve(template);
-        log.info("notify {}: {}", to, message);
-        try {
-            ctx.notifications().send(to, message);
-        } catch (Exception e) {
-            log.error("could not notify {}: {}", to, e.toString());
+        log.info("notify {}: {}", String.join(", ", to), message);
+        for (String channel : to) {
+            try {
+                ctx.notifications().send(channel, message);
+            } catch (Exception e) {
+                log.error("could not notify {}: {}", channel, e.toString());
+            }
         }
         return new Plan.Notification(to, message);
     }
 
     /**
+     * Which outcome a notify policy is judged against. A success whose last run failed is a
+     * recovery; a job that has never run cannot have recovered.
+     */
+    static Enums.Outcome outcomeOf(Run.Status status, Run.Status previous) {
+        return switch (status) {
+            case SUCCESS -> previous == Run.Status.FAILED
+                    ? Enums.Outcome.RECOVERED : Enums.Outcome.SUCCESS;
+            case FAILED -> Enums.Outcome.FAILURE;
+            case SKIPPED, CANCELLED -> null;
+        };
+    }
+
+    /**
      * Writes the dedupe key and everything the run learned. A run that ended {@code SKIPPED} still
-     * records both, or every poll would rediscover and re-skip forever (DESIGN.md §6.2 rule 6). A
-     * {@code CANCELLED} run records nothing: the work was withdrawn, not done.
+     * records both, or every poll would rediscover and re-skip forever (DESIGN.md §6.2 rule 6),
+     * but leaves the recorded status alone: it did no work, so it is not what the job last did.
+     * A {@code CANCELLED} run records nothing: the work was withdrawn, not done.
      */
     private void record(JobDef job, Event event, Context ctx, Run.Status status,
                         Map<String, Object> persist, StateStore.JobState previous) {
@@ -467,7 +479,9 @@ public final class JobRunner {
 
         remember(job, new StateStore.JobState(
                 event.dedupeKey() == null ? previous.dedupeKey() : event.dedupeKey(),
-                Instant.now(), values));
+                Instant.now(),
+                status == Run.Status.SKIPPED ? previous.status() : status,
+                values));
     }
 
     /**

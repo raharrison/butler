@@ -71,7 +71,7 @@ public final class Context implements RunContext {
      * because a plan has to be deterministic.
      */
     public static Context forPlan(RunEnvironment env, JobDef job, Event event,
-                                  Map<String, Object> persisted) {
+                                  StateStore.JobState persisted) {
         Context ctx = base(env, job, event, persisted, true);
         ctx.run.put("id", "<run-id>");
         ctx.run.put("job", job.name());
@@ -91,7 +91,7 @@ public final class Context implements RunContext {
      * has one; {@link #outcome} fills it in before hooks and notifications are rendered.
      */
     public static Context forRun(RunEnvironment env, JobDef job, Event event,
-                                 Map<String, Object> persisted, String runId, Instant startedAt) {
+                                 StateStore.JobState persisted, String runId, Instant startedAt) {
         Context ctx = base(env, job, event, persisted, false);
         ctx.run.put("id", runId);
         ctx.run.put("job", job.name());
@@ -102,13 +102,16 @@ public final class Context implements RunContext {
     }
 
     private static Context base(RunEnvironment env, JobDef job, Event event,
-                                Map<String, Object> persisted, boolean dryRun) {
+                                StateStore.JobState persisted, boolean dryRun) {
         Context ctx = new Context(dryRun, env);
 
         ctx.namespaces.put("vars", ctx.vars);
         ctx.namespaces.put("trigger", event.facts());
         ctx.namespaces.put("steps", ctx.steps);
-        ctx.state.putAll(persisted);
+        ctx.state.putAll(persisted.values());
+        // Known before the run starts, unlike the rest of the outcome half of run.*.
+        ctx.run.put("previous_status",
+                persisted.status() == null ? null : persisted.status().toString());
         ctx.namespaces.put("state", ctx.state);
         ctx.namespaces.put("env", System.getenv());
         ctx.namespaces.put("secret", env.secrets());

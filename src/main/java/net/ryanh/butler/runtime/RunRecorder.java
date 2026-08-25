@@ -322,7 +322,7 @@ public final class RunRecorder {
                         str(when.get("explained")), Boolean.TRUE.equals(when.get("result")),
                         str(when.get("error"))),
                 List.copyOf(steps), values(doc.get("persisted")),
-                notified == null ? null : new Plan.Notification(str(notified.get("to")),
+                notified == null ? null : new Plan.Notification(strings(notified.get("to")),
                         str(notified.get("message"))),
                 str(doc.get("failed_step")), str(doc.get("message")));
     }

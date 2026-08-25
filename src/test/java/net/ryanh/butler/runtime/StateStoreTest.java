@@ -26,13 +26,23 @@ class StateStoreTest {
         StateStore store = StateStore.at(dir);
         Instant when = Instant.now().truncatedTo(ChronoUnit.MILLIS);
 
-        store.write("api", new StateStore.JobState("artifact-1.2.4", when,
+        store.write("api", new StateStore.JobState("artifact-1.2.4", when, Run.Status.SUCCESS,
                 Map.of("deployed_version", "1.2.4")));
 
         StateStore.JobState read = store.read("api");
         assertEquals("artifact-1.2.4", read.dedupeKey());
         assertEquals(when, read.lastRun());
+        assertEquals(Run.Status.SUCCESS, read.status());
         assertEquals("1.2.4", read.values().get("deployed_version"));
+    }
+
+    @Test
+    @DisplayName("a job that has never run has no status, which is what makes its first success "
+            + "not a recovery")
+    void noStatusUntilARunHasOne() throws IOException {
+        StateStore store = StateStore.at(dir);
+        store.write("api", new StateStore.JobState("k", Instant.now(), null, Map.of()));
+        assertNull(store.read("api").status());
     }
 
     @Test
@@ -48,7 +58,7 @@ class StateStoreTest {
             + "dedupe_key")
     void aPersistedValueCannotOverwriteTheBookkeeping() throws IOException {
         StateStore store = StateStore.at(dir);
-        store.write("api", new StateStore.JobState("the-real-key", Instant.now(),
+        store.write("api", new StateStore.JobState("the-real-key", Instant.now(), null,
                 Map.of("dedupe_key", "just a value")));
 
         StateStore.JobState read = store.read("api");
@@ -61,7 +71,7 @@ class StateStoreTest {
             + "the next run reads back what was written")
     void valuesWithoutAJsonFormRoundTrip() throws IOException {
         StateStore store = StateStore.at(dir);
-        store.write("api", new StateStore.JobState("k", Instant.now(), Map.of(
+        store.write("api", new StateStore.JobState("k", Instant.now(), null, Map.of(
                 "as_version", Semver.parse("1.2.4"),
                 "how_long", Duration.ofSeconds(30),
                 "where", Path.of("/srv/apps/api"))));
@@ -78,7 +88,7 @@ class StateStoreTest {
     @DisplayName("ordinary JSON values are stored as themselves, nested ones included")
     void jsonValuesAreLeftAlone() throws IOException {
         StateStore store = StateStore.at(dir);
-        store.write("api", new StateStore.JobState("k", Instant.now(), Map.of(
+        store.write("api", new StateStore.JobState("k", Instant.now(), null, Map.of(
                 "count", 5,
                 "healthy", true,
                 "probe", Map.of("took", Duration.ofMillis(1500)))));
@@ -104,13 +114,13 @@ class StateStoreTest {
     @DisplayName("a failed write leaves the previous state intact and no temp file behind")
     void writesAreAllOrNothing() throws IOException {
         StateStore store = StateStore.at(dir);
-        store.write("api", new StateStore.JobState("first", Instant.now(),
+        store.write("api", new StateStore.JobState("first", Instant.now(), null,
                 Map.of("deployed_version", "1.2.3")));
 
         // A value that blows up on the way to disk, which is the closest a test gets to the
         // machine dying half way through. The file already there must not be touched.
         assertThrows(RuntimeException.class, () -> store.write("api",
-                new StateStore.JobState("second", Instant.now(),
+                new StateStore.JobState("second", Instant.now(), null,
                         Map.of("deployed_version", new Unwritable()))));
 
         StateStore.JobState read = store.read("api");
@@ -154,7 +164,7 @@ class StateStoreTest {
     @DisplayName("a job name that is not a usable file name still gets a file")
     void awkwardJobNames() throws IOException {
         StateStore store = StateStore.at(dir);
-        store.write("deploy/api", new StateStore.JobState("k", Instant.now(), Map.of()));
+        store.write("deploy/api", new StateStore.JobState("k", Instant.now(), null, Map.of()));
         assertTrue(Files.exists(dir.resolve("jobs/deploy_api.json")));
         assertEquals("k", store.read("deploy/api").dedupeKey());
     }

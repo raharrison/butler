@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -172,6 +173,50 @@ class PlanTest {
             assertNull(built.plan().notification(),
                     "the policy fires on failure only, so a successful run notifies nobody");
             assertFalse(built.rendered().contains("notify"), built.rendered());
+        }
+
+        @Test
+        @DisplayName("shows every channel the message would go to")
+        void notifyShowsAllChannels() {
+            Built built = build("""
+                    notifiers:
+                      ops: {uses: notify.slack}
+                      oncall: {uses: notify.slack}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: go}]
+                        notify:
+                          to: [ops, oncall]
+                          success: "deployed"
+                    """, "j", StepRegistry.discover(), Map.of());
+
+            assertTrue(built.rendered().contains("ops, oncall <- \"deployed\""),
+                    built.rendered());
+        }
+
+        @Test
+        @DisplayName("knows a success after a failure would be a recovery, so it promises the "
+                + "message the run would actually send")
+        void notifySeesARecovery() throws IOException {
+            StateStore.at(stateDir).write("j", new StateStore.JobState(
+                    null, Instant.now(), Run.Status.FAILED, Map.of()));
+
+            Built built = build("""
+                    notifiers:
+                      ops: {uses: notify.slack}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: go}]
+                        notify:
+                          to: ops
+                          on: [success, recovered]
+                          success: "deployed"
+                          recovered: "back after ${run.previous_status}"
+                    """, "j", StepRegistry.discover(), Map.of());
+
+            assertEquals("back after failed", built.plan().notification().message());
         }
 
         @Test

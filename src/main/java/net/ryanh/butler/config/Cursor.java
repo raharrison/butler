@@ -73,6 +73,21 @@ public final class Cursor {
         return string(key, null);
     }
 
+    /**
+     * One name or a list of them, at least one.
+     */
+    public List<String> requiredStrings(String key) {
+        if (raw(key) == null) {
+            diags.error(path, "missing required key \"" + key + "\"");
+            return List.of();
+        }
+        List<String> values = strings(key);
+        if (values.isEmpty() && !diags.hasErrorAt(child(key))) {
+            diags.error(child(key), "must name at least one");
+        }
+        return values;
+    }
+
     public Integer integer(String key, Integer fallback) {
         Object v = raw(key);
         if (v == null) {
@@ -160,9 +175,33 @@ public final class Cursor {
         if (v == null) {
             return fallback;
         }
-        String s = String.valueOf(v).trim().toUpperCase(Locale.ROOT).replace('-', '_');
+        E value = constant(String.valueOf(v), type, child(key));
+        return value == null ? fallback : value;
+    }
+
+    /**
+     * One constant of {@code type} or a list of them. Empty when the key is absent.
+     */
+    public <E extends Enum<E>> List<E> enumValues(String key, Class<E> type) {
+        boolean list = raw(key) instanceof List;
+        List<String> texts = strings(key);
+        List<E> out = new ArrayList<>();
+        for (int i = 0; i < texts.size(); i++) {
+            E value = constant(texts.get(i), type, list ? child(key) + "/" + i : child(key));
+            if (value != null) {
+                out.add(value);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    /**
+     * @return null after reporting, when the text names no constant of {@code type}
+     */
+    private <E extends Enum<E>> E constant(String text, Class<E> type, String at) {
+        String name = text.trim().toUpperCase(Locale.ROOT).replace('-', '_');
         for (E c : type.getEnumConstants()) {
-            if (c.name().equals(s)) {
+            if (c.name().equals(name)) {
                 return c;
             }
         }
@@ -170,9 +209,9 @@ public final class Cursor {
         for (E c : type.getEnumConstants()) {
             allowed.add(c.name().toLowerCase(Locale.ROOT));
         }
-        diags.error(child(key), "expected one of " + String.join(", ", allowed)
-                + ", found \"" + v + "\"" + Suggestions.from(String.valueOf(v), allowed));
-        return fallback;
+        diags.error(at, "expected one of " + String.join(", ", allowed)
+                + ", found \"" + text + "\"" + Suggestions.from(text, allowed));
+        return null;
     }
 
     // ------------------------------------------------------------- containers

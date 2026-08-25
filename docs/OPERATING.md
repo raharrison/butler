@@ -186,7 +186,7 @@ few hundred lines a day rather than a stream.
 
 ```
 /var/lib/butler/
-  jobs/api.json                          { dedupe_key, last_run, state: { ... } }
+  jobs/api.json                          { dedupe_key, last_run, last_status, state: { ... } }
   runs/2026-08-09/<job>-<run-id>.json    one full record per run
   runs/index.jsonl                       append-only, one line per run
 ```
@@ -198,18 +198,22 @@ store would add.
 
 ### `jobs/<job>.json`
 
-What Butler remembers between runs: the last dedupe key it processed, when it last ran, and the
-values `persist:` and `discover:` produced.
+What Butler remembers between runs: the last dedupe key it processed, when it last ran, how that
+run ended, and the values `persist:` and `discover:` produced.
 
 ```json
 {
   "dedupe_key" : null,
   "last_run" : "2026-08-12T23:37:59.540467500Z",
+  "last_status" : "success",
   "state" : {
     "deployed_version" : "1.2.4"
   }
 }
 ```
+
+`last_status` is what `${run.previous_status}` reads and what makes a success after a failure a
+`recovered` notification. A run skipped by `when:` leaves it alone.
 
 Persisted values sit under their own `state` key, so a job may `persist:` a value called
 `dedupe_key` without overwriting the bookkeeping. They are JSON scalars, written exactly as the run

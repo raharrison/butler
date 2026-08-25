@@ -60,9 +60,21 @@ public record Plan(
     }
 
     /**
-     * The message the job's notify policy would send if the run succeeded.
+     * The message the job's notify policy would send if the run succeeded, and the channels it
+     * would go to.
      */
-    public record Notification(String to, String message) {
+    public record Notification(List<String> to, String message) {
+
+        public Notification {
+            to = List.copyOf(to);
+        }
+
+        /**
+         * The channels as one name or a comma-separated list, for a report to show.
+         */
+        public String channels() {
+            return String.join(", ", to);
+        }
     }
 
     /**

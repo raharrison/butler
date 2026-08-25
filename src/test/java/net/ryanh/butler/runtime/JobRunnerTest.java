@@ -6,6 +6,7 @@ import net.ryanh.butler.spi.RunContext;
 import net.ryanh.butler.spi.StepResult;
 import net.ryanh.butler.spi.StepType;
 import net.ryanh.butler.testing.Fixture;
+import net.ryanh.butler.testing.StubServer;
 import net.ryanh.butler.util.Durations;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -620,6 +621,162 @@ class JobRunnerTest {
                     """, "j");
 
             assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+        }
+    }
+
+    @Nested
+    @DisplayName("notify")
+    class Notify {
+
+        /**
+         * Two channels on one server, told apart by the path each posts to.
+         */
+        private String config(StubServer channels, String policy, String step) {
+            return config(channels, policy, step, "");
+        }
+
+        private String config(StubServer channels, String policy, String step, String jobKeys) {
+            return """
+                    notifiers:
+                      ops:
+                        uses: notify.webhook
+                        url: %s
+                      oncall:
+                        uses: notify.webhook
+                        url: %s
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                    %s    steps:
+                          - name: Deploy
+                            uses: %s
+                    %s
+                    """.formatted(channels.url("/ops"), channels.url("/oncall"), jobKeys, step,
+                    policy);
+        }
+
+        private List<String> paths(StubServer channels) {
+            return channels.received().stream().map(StubServer.Received::path).toList();
+        }
+
+        private String bodyTo(StubServer channels, String path) {
+            return channels.received().stream()
+                    .filter(r -> r.path().equals(path)).map(StubServer.Received::body)
+                    .findFirst().orElseThrow(() -> new AssertionError(
+                            "nothing was posted to " + path + ", only " + paths(channels)));
+        }
+
+        private static final String BOTH_OUTCOMES = """
+                    notify:
+                      to: [ ops, oncall ]
+                      on: [ success, failure ]
+                      success: "deployed"
+                      failure: "broke"
+                """;
+
+        @Test
+        @DisplayName("every channel named gets the message")
+        void everyChannelNamedIsSent() {
+            try (StubServer channels = StubServer.serving(200, "")) {
+                Run run = run(config(channels, BOTH_OUTCOMES, "control.log"), "j");
+
+                assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+                assertEquals(List.of("ops", "oncall"), run.notification().to());
+                assertEquals(List.of("/ops", "/oncall"), paths(channels));
+            }
+        }
+
+        @Test
+        @DisplayName("a channel that refuses does not stop the others, or fail the run")
+        void oneRefusingChannelDoesNotStopTheRest() {
+            try (StubServer channels = StubServer.serving(request ->
+                    new StubServer.Answer(request.path().equals("/ops") ? 500 : 200, ""))) {
+                Run run = run(config(channels, BOTH_OUTCOMES, "control.log"), "j");
+
+                assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+                assertEquals(List.of("/ops", "/oncall"), paths(channels),
+                        "the refusal is logged, and the next channel is still tried");
+            }
+        }
+
+        private static final String WITH_RECOVERY = """
+                    notify:
+                      to: ops
+                      on: [ success, failure, recovered ]
+                      success: "deployed"
+                      failure: "broke"
+                      recovered: "back after ${run.previous_status}"
+                """;
+
+        @Test
+        @DisplayName("a success whose last run failed is a recovery, and says what it recovered "
+                + "from")
+        void successAfterFailureIsARecovery() {
+            try (StubServer channels = StubServer.serving(200, "")) {
+                assertEquals(Run.Status.FAILED,
+                        run(config(channels, WITH_RECOVERY, "control.fail"), "j").status());
+                Run second = run(config(channels, WITH_RECOVERY, "control.log"), "j");
+
+                assertEquals(Run.Status.SUCCESS, second.status(), second.message());
+                assertEquals("back after failed", second.notification().message());
+            }
+        }
+
+        @Test
+        @DisplayName("a first-ever run is not a recovery")
+        void aFirstRunIsNotARecovery() {
+            try (StubServer channels = StubServer.serving(200, "")) {
+                Run run = run(config(channels, WITH_RECOVERY, "control.log"), "j");
+                assertEquals("deployed", run.notification().message());
+            }
+        }
+
+        @Test
+        @DisplayName("a second success in a row is not a recovery either")
+        void successAfterSuccessIsNotARecovery() {
+            try (StubServer channels = StubServer.serving(200, "")) {
+                run(config(channels, WITH_RECOVERY, "control.log"), "j");
+                Run second = run(config(channels, WITH_RECOVERY, "control.log"), "j");
+                assertEquals("deployed", second.notification().message());
+            }
+        }
+
+        @Test
+        @DisplayName("a policy that never mentions recovered sends its success message, so "
+                + "adding one is what opts a config in")
+        void recoveryFallsBackToSuccess() {
+            try (StubServer channels = StubServer.serving(200, "")) {
+                run(config(channels, BOTH_OUTCOMES, "control.fail"), "j");
+                Run second = run(config(channels, BOTH_OUTCOMES, "control.log"), "j");
+
+                assertEquals("deployed", second.notification().message());
+                assertEquals(List.of("/ops", "/oncall", "/ops", "/oncall"), paths(channels));
+            }
+        }
+
+        @Test
+        @DisplayName("a skipped run leaves the recorded failure standing, so the next success is "
+                + "still a recovery")
+        void aSkippedRunDoesNotClearAFailure() {
+            try (StubServer channels = StubServer.serving(200, "")) {
+                run(config(channels, WITH_RECOVERY, "control.fail"), "j");
+
+                assertEquals(Run.Status.SKIPPED, run(config(channels, WITH_RECOVERY,
+                        "control.log", "    when: false\n"), "j").status());
+
+                Run third = run(config(channels, WITH_RECOVERY, "control.log"), "j");
+                assertEquals("back after failed", third.notification().message());
+            }
+        }
+
+        @Test
+        @DisplayName("the rendered message is what the channel receives")
+        void theChannelReceivesTheRenderedMessage() {
+            try (StubServer channels = StubServer.serving(200, "")) {
+                run(config(channels, BOTH_OUTCOMES, "control.fail"), "j");
+                assertTrue(bodyTo(channels, "/oncall").contains("broke"),
+                        bodyTo(channels, "/oncall"));
+            }
         }
     }
 

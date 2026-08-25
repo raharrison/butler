@@ -31,7 +31,7 @@ public final class PlanBuilder {
 
     public static Plan build(RunEnvironment env, JobDef job, Event event, Diagnostics diags) {
         StateStore.JobState persisted = env.state().read(job.name());
-        Context ctx = Context.forPlan(env, job, event, persisted.values());
+        Context ctx = Context.forPlan(env, job, event, persisted);
 
         // Discovery runs for real, so it is held to the deadline the run would hold it to.
         Duration timeout = env.config().timeoutFor(job);
@@ -49,7 +49,7 @@ public final class PlanBuilder {
         Plan.Notification notify = null;
         if (wouldRun) {
             job.persist().forEach((k, v) -> persist.put(k, ctx.resolveValue(v)));
-            notify = notification(job, ctx);
+            notify = notification(job, ctx, persisted);
         }
 
         return new Plan(job.name(), event.trigger(), event.facts(), discover, when, steps,
@@ -93,18 +93,18 @@ public final class PlanBuilder {
     /**
      * The message a successful run would send, judged the same way {@code JobRunner} judges it. A
      * plan promising a notification the run would not send is the divergence dry run exists to
-     * eliminate.
+     * eliminate, which includes knowing that a success after a failure is a recovery.
      */
-    private static Plan.Notification notification(JobDef job, Context ctx) {
-        if (job.notifyPolicy() == null
-                || !job.notifyPolicy().on().contains(Enums.Outcome.SUCCESS)) {
+    private static Plan.Notification notification(JobDef job, Context ctx,
+                                                  StateStore.JobState persisted) {
+        if (job.notifyPolicy() == null) {
             return null;
         }
-        String message = job.notifyPolicy().messages().get("success");
-        if (message == null) {
-            return null;
-        }
-        return new Plan.Notification(job.notifyPolicy().to(), ctx.resolve(message));
+        Enums.Outcome outcome =
+                JobRunner.outcomeOf(Run.Status.SUCCESS, persisted.status());
+        String message = job.notifyPolicy().templateFor(outcome);
+        return message == null
+                ? null : new Plan.Notification(job.notifyPolicy().to(), ctx.resolve(message));
     }
 
     private static List<Plan.Entry> entries(String section, List<StepDef> defs, JobDef job,

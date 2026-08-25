@@ -28,9 +28,10 @@ public final class Enums {
     }
 
     /**
-     * Run outcomes a notify policy can fire on.
+     * Run outcomes a notify policy can fire on. {@code RECOVERED} is a success whose previous run
+     * failed.
      */
     public enum Outcome {
-        SUCCESS, FAILURE
+        SUCCESS, FAILURE, RECOVERED
     }
 }

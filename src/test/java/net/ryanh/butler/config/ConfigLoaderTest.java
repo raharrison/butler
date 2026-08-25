@@ -188,9 +188,11 @@ class ConfigLoaderTest {
         @Test
         void notifyPolicy() throws IOException {
             var n = load().config().jobs().get("api").notifyPolicy();
-            assertEquals("ops", n.to());
-            assertEquals(List.of(Enums.Outcome.SUCCESS, Enums.Outcome.FAILURE), n.on());
+            assertEquals(List.of("ops", "oncall"), n.to());
+            assertEquals(List.of(Enums.Outcome.SUCCESS, Enums.Outcome.FAILURE,
+                    Enums.Outcome.RECOVERED), n.on());
             assertTrue(n.messages().get("success").contains("deployed"));
+            assertTrue(n.messages().get("recovered").contains("is back"));
         }
     }
 

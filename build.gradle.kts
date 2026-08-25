@@ -66,4 +66,6 @@ tasks.test {
     // PackagingTest runs the shadow jar as a subprocess.
     dependsOn(tasks.shadowJar)
     systemProperty("butler.jar", tasks.shadowJar.flatMap { it.archiveFile }.get().asFile.path)
+    // tests can compare docs against the canonical config
+    inputs.dir("docs").withPropertyName("docs").withPathSensitivity(PathSensitivity.RELATIVE)
 }

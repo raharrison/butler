@@ -105,22 +105,25 @@ Three rules make that unambiguous:
 
 Everything a condition or `${}` can see:
 
-| Namespace        | Contents                                                                                                                                      |
-|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| `vars.*`         | global `vars:` merged with job `vars:`, then any `set` steps                                                                                  |
-| `trigger.*`      | facts from the event, including regex named capture groups                                                                                    |
-| `steps.<name>.*` | results of steps that declared `register:`                                                                                                    |
-| `state.*`        | values persisted by previous successful runs, overlaid with anything the job's `discover:` block observed on this run (§6.2)                  |
-| `env.*`          | process environment                                                                                                                           |
-| `secret.*`       | resolved secrets, from env or secrets files. Not redacted in v1 (§11)                                                                         |
-| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`; and in hooks and `notify:`, also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
-| `butler.*`       | `version`, `host`                                                                                                                             |
+| Namespace        | Contents                                                                                                                                                         |
+|------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `vars.*`         | global `vars:` merged with job `vars:`, then any `set` steps                                                                                                     |
+| `trigger.*`      | facts from the event, including regex named capture groups                                                                                                       |
+| `steps.<name>.*` | results of steps that declared `register:`                                                                                                                       |
+| `state.*`        | values persisted by previous successful runs, overlaid with anything the job's `discover:` block observed on this run (§6.2)                                     |
+| `env.*`          | process environment                                                                                                                                              |
+| `secret.*`       | resolved secrets, from env or secrets files. Not redacted in v1 (§11)                                                                                            |
+| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`, `previous_status`; and in hooks and `notify:`, also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
+| `butler.*`       | `version`, `host`                                                                                                                                                |
 
 Later namespaces never shadow earlier ones; the names are distinct on purpose.
 
 `run.duration` is elapsed time written for a person to read (`20m 47s`), rounded to whole seconds,
 so it is a string rather than a duration. `run.duration_ms` is the exact figure as a number, and is
 what a condition compares: `run.duration_ms > 300000`.
+
+`run.previous_status` is how the last run that did work ended, and is null until a job has run
+once. A run skipped by `when:` leaves it alone: it did nothing, so it is not what the job last did.
 
 ---
 
@@ -173,6 +176,9 @@ notifiers:
     uses: notify.slack
     webhook: ${secret.SLACK_WEBHOOK}
     channel: "#deploys"
+  oncall:
+    uses: notify.webhook
+    url: https://alerts.example.com/hooks/butler
 
 jobs:
 
@@ -264,10 +270,11 @@ jobs:
       current_release: ${vars.releases_root}/api/releases/${trigger.version}
 
     notify:
-      to: ops
-      on: [ success, failure ]
+      to: [ ops, oncall ]           # one name or a list
+      on: [ success, failure, recovered ]
       success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
       failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}, rollback ${steps.rollback.status}"
+      recovered: ":white_check_mark: api is back on ${trigger.version} after ${run.previous_status}"
 ```
 
 Note what is *not* in there: no bash, no version comparison logic, no retry loops, no "is it up
@@ -290,21 +297,21 @@ one key away:
 
 The complete job schema, for reference:
 
-| Key                                    |          | Meaning                                                                                 |
-|----------------------------------------|----------|-----------------------------------------------------------------------------------------|
-| `on`                                   | required | list of triggers                                                                        |
-| `steps`                                | required | the pipeline                                                                            |
-| `description`                          |          | free text, used in logs and `butler check`                                              |
-| `vars`                                 |          | job-local vars, merged over global `vars:`                                              |
-| `env`                                  |          | environment applied to every process-backed step in the job                             |
-| `discover`                             |          | observation steps that populate `state.*` (§6.2)                                        |
-| `when`                                 |          | run only if true, evaluated after `discover`                                            |
-| `concurrency`                          |          | `group`, `mode`, `queue_newest_only` (§5.4)                                             |
-| `timeout`                              |          | whole-run limit; exceeding it fails the run. Defaults to `settings.default_job_timeout` |
-| `on_failure` / `on_success` / `always` |          | lifecycle hooks (§2.1)                                                                  |
-| `persist`                              |          | state keys written after a successful run                                               |
-| `notify`                               |          | `to`, `on: [success, failure]`, and per-outcome message templates                       |
-| `run_retention`                        |          | `count`, `age`; overrides `settings.run_retention` (§6.4)                               |
+| Key                                    |          | Meaning                                                                                              |
+|----------------------------------------|----------|------------------------------------------------------------------------------------------------------|
+| `on`                                   | required | list of triggers                                                                                     |
+| `steps`                                | required | the pipeline                                                                                         |
+| `description`                          |          | free text, used in logs and `butler check`                                                           |
+| `vars`                                 |          | job-local vars, merged over global `vars:`                                                           |
+| `env`                                  |          | environment applied to every process-backed step in the job                                          |
+| `discover`                             |          | observation steps that populate `state.*` (§6.2)                                                     |
+| `when`                                 |          | run only if true, evaluated after `discover`                                                         |
+| `concurrency`                          |          | `group`, `mode`, `queue_newest_only` (§5.4)                                                          |
+| `timeout`                              |          | whole-run limit; exceeding it fails the run. Defaults to `settings.default_job_timeout`              |
+| `on_failure` / `on_success` / `always` |          | lifecycle hooks (§2.1)                                                                               |
+| `persist`                              |          | state keys written after a successful run                                                            |
+| `notify`                               |          | `to` (one channel or a list), `on: [success, failure, recovered]`, and per-outcome message templates |
+| `run_retention`                        |          | `count`, `age`; overrides `settings.run_retention` (§6.4)                                            |
 
 Everything except `on` and `steps` is optional, and a job with only those two is valid - that
 is the floor the DSL should stay usable at.
@@ -608,7 +615,7 @@ DRY RUN  job=api  trigger=file.appeared  path=/srv/artifacts/api/api-1.2.4.jar  
   on_failure                                          not shown: reached only on failure
   persist   (not written)   deployed_version = "1.2.4"
                             current_release  = "/srv/apps/api/releases/1.2.4"
-  notify    (not sent)      ops <- ":rocket: api 1.2.4 deployed in <duration>"
+  notify    (not sent)      ops, oncall <- ":rocket: api 1.2.4 deployed in <duration>"
 
   1 warning
     step 3      no NOPASSWD sudoers rule matches `systemctl restart api.service`

@@ -33,7 +33,7 @@ class ContextTest {
         StepRegistry steps = StepRegistry.discover();
         ConfigLoader.Result r = Fixture.config(yaml, steps);
         return Context.forPlan(Fixture.environment(r, steps, stateDir),
-                r.config().jobs().get("j"), new Event("manual", facts, null), Map.of());
+                r.config().jobs().get("j"), new Event("manual", facts, null), StateStore.JobState.empty());
     }
 
     private static final String JOB = """

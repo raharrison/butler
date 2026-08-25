@@ -439,16 +439,8 @@ public final class ConfigLoader {
         if (!present) {
             return null;
         }
-        String to = c.requiredString("to");
-        List<Enums.Outcome> on = new ArrayList<>();
-        for (String s : c.strings("on")) {
-            try {
-                on.add(Enums.Outcome.valueOf(s.trim().toUpperCase(Locale.ROOT)));
-            } catch (IllegalArgumentException e) {
-                c.diagnostics().error(c.path() + "/on",
-                        "expected success or failure, found \"" + s + "\"");
-            }
-        }
+        List<String> to = c.requiredStrings("to");
+        List<Enums.Outcome> on = c.enumValues("on", Enums.Outcome.class);
         Map<String, String> messages = new LinkedHashMap<>();
         for (Enums.Outcome o : Enums.Outcome.values()) {
             String key = o.name().toLowerCase(Locale.ROOT);
@@ -461,7 +453,7 @@ public final class ConfigLoader {
         if (on.isEmpty()) {
             on = List.of(Enums.Outcome.SUCCESS, Enums.Outcome.FAILURE);
         }
-        return new NotifyDef(to, List.copyOf(on), Collections.unmodifiableMap(messages));
+        return new NotifyDef(to, on, Collections.unmodifiableMap(messages));
     }
 
     // ---------------------------------------------------------------------- step

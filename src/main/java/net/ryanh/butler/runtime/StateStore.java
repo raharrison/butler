@@ -12,10 +12,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * What Butler remembers between runs: one JSON file per job under {@code <state_dir>/jobs/}
@@ -43,13 +40,16 @@ public final class StateStore {
     }
 
     /**
-     * What a job knows: the last event it processed, when it last ran, and every value its
-     * {@code persist:} and {@code discover:} blocks produced.
+     * What a job knows: the last event it processed, when it last ran, how that run ended, and
+     * every value its {@code persist:} and {@code discover:} blocks produced.
      *
      * <p>The values are nested rather than beside {@code dedupeKey} so that a job may persist a key
      * called {@code dedupe_key} without overwriting the bookkeeping.
+     *
+     * @param status how the last run that did work ended, or null if the job has never run
      */
-    public record JobState(String dedupeKey, Instant lastRun, Map<String, Object> values) {
+    public record JobState(String dedupeKey, Instant lastRun, Run.Status status,
+                           Map<String, Object> values) {
 
         public JobState {
             values = values == null ? Map.of()
@@ -57,7 +57,7 @@ public final class StateStore {
         }
 
         public static JobState empty() {
-            return new JobState(null, null, Map.of());
+            return new JobState(null, null, null, Map.of());
         }
     }
 
@@ -98,7 +98,7 @@ public final class StateStore {
             return JobState.empty();
         }
         return new JobState(asString(raw.get("dedupe_key")), instant(raw.get("last_run")),
-                values(raw.get("state")));
+                status(raw.get("last_status")), values(raw.get("state")));
     }
 
     /**
@@ -108,6 +108,8 @@ public final class StateStore {
         Map<String, Object> document = new LinkedHashMap<>();
         document.put("dedupe_key", state.dedupeKey());
         document.put("last_run", state.lastRun() == null ? null : state.lastRun().toString());
+        document.put("last_status",
+                state.status() == null ? null : state.status().toString());
         document.put("state", storable(state.values()));
 
         Atomically.write(fileFor(job), MAPPER.writeValueAsString(document) + "\n");
@@ -139,6 +141,17 @@ public final class StateStore {
 
     private static String asString(Object value) {
         return value == null ? null : String.valueOf(value);
+    }
+
+    private static Run.Status status(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Run.Status.valueOf(String.valueOf(value).toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private static Instant instant(Object value) {

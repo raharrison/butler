@@ -909,6 +909,98 @@ class DiagnosticsTest {
                     """);
             assertAt(d, 5, 5, "missing required key \"to\"");
         }
+
+        @Test
+        @DisplayName("an unknown channel in a to: list points at the one that is wrong")
+        void unknownChannelInAListIsLocated() {
+            var d = only("""
+                    notifiers:
+                      ops:
+                        uses: notify.slack
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                        notify:
+                          to: [ops, opps]
+                    """);
+            assertAt(d, 9, "no notifier named \"opps\"");
+            assertTrue(d.message().contains("ops"), d.message());
+        }
+
+        @Test
+        @DisplayName("an empty to: names no channel, so the policy could never send")
+        void anEmptyToIsRejected() {
+            var d = only("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                        notify:
+                          to: []
+                          failure: it broke
+                    """);
+            assertAt(d, 6, "must name at least one");
+        }
+
+        @Test
+        @DisplayName("an unknown outcome lists the ones there are")
+        void unknownOutcomeSuggests() {
+            var d = only("""
+                    notifiers:
+                      ops: {uses: notify.webhook, url: "http://localhost/x"}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                        notify:
+                          to: ops
+                          on: [success, recoverd]
+                    """);
+            assertAt(d, 9, "expected one of success, failure, recovered");
+            assertTrue(d.message().contains("did you mean \"recovered\""), d.message());
+        }
+
+        @Test
+        @DisplayName("a recovered message is a success message, so it sees on_success registers")
+        void recoveredMessageSeesTheSuccessPath() {
+            var r = loadAndValidate("""
+                    notifiers:
+                      ops: {uses: notify.webhook, url: "http://localhost/x"}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                        on_success:
+                          - uses: control.log
+                            register: announced
+                        notify:
+                          to: ops
+                          on: [recovered]
+                          recovered: "back, announced ${steps.announced.status}"
+                    """);
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+        }
+
+        @Test
+        @DisplayName("a recovered message cannot name an on_failure hook")
+        void recoveredMessageCannotNameAFailureHook() {
+            var d = only("""
+                    notifiers:
+                      ops: {uses: notify.webhook, url: "http://localhost/x"}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                        on_failure:
+                          - uses: control.log
+                            register: rollback
+                        notify:
+                          to: ops
+                          recovered: "back after ${steps.rollback.status}"
+                    """);
+            assertAt(d, 12, "registered in on_failure:, which does not run when the job succeeds");
+        }
     }
 
     @Nested

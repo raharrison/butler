@@ -321,6 +321,8 @@ class CliTest {
                     """);
             assertEquals(0, Main.run("check", "-c", p.toString()), stderr());
             String s = stdout();
+            assertTrue(s.contains("to: [ops]"),
+                    "a channel list reads back as a list:\n" + s);
             assertTrue(s.contains("expect_status: [200, 204]"), s);
             assertTrue(s.contains("headers: {Accept: application/json}"), s);
             assertTrue(s.contains("on: [success, failure]"), s);

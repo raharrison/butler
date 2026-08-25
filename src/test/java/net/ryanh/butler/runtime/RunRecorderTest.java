@@ -62,7 +62,7 @@ class RunRecorderTest {
                 List.of(new Run.Step("step", "Stage the release", "fs.copy",
                         StepResult.Status.OK, Duration.ofMillis(80), 1, null)),
                 Map.of("deployed_version", "1.2.4"),
-                new Plan.Notification("ops", "api 1.2.4 deployed"), null, null);
+                new Plan.Notification(List.of("ops"), "api 1.2.4 deployed"), null, null);
     }
 
     private List<Path> records() throws IOException {
@@ -112,7 +112,7 @@ class RunRecorderTest {
         assertTrue(json.contains("\"Stage the release\""), json);
         assertTrue(json.contains("\"duration\" : \"12s\""), json);
         assertTrue(json.contains("\"deployed_version\" : \"1.2.4\""), json);
-        assertTrue(json.contains("\"to\" : \"ops\""), json);
+        assertTrue(json.contains("\"to\" : [ \"ops\" ]"), json);
     }
 
     @Test

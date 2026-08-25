@@ -8,6 +8,7 @@ settings:
   max_concurrent_runs: 4
   poll_interval: 5s
   shutdown_grace: 2m
+  default_job_timeout: 1h
   run_retention: { count: 200, age: 30d }
   plugins_dir: /var/lib/butler/plugins
 
@@ -23,6 +24,9 @@ notifiers:
     uses: notify.slack
     webhook: ${secret.SLACK_WEBHOOK}
     channel: "#deploys"
+  oncall:
+    uses: notify.webhook
+    url: https://alerts.example.com/hooks/butler
 
 jobs:
 
@@ -114,7 +118,8 @@ jobs:
       current_release: ${vars.releases_root}/api/releases/${trigger.version}
 
     notify:
-      to: ops
-      on: [ success, failure ]
+      to: [ ops, oncall ]
+      on: [ success, failure, recovered ]
       success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
       failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}, rollback ${steps.rollback.status}"
+      recovered: ":white_check_mark: api is back on ${trigger.version} after ${run.previous_status}"

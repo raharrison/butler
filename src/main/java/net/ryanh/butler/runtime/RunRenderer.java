@@ -67,7 +67,7 @@ public final class RunRenderer {
         }
         persist(out, run.persisted());
         if (run.notification() != null) {
-            out.add(PlanRenderer.pad("  notify", 12) + run.notification().to() + " <- "
+            out.add(PlanRenderer.pad("  notify", 12) + run.notification().channels() + " <- "
                     + Literals.of(run.notification().message()));
         }
 

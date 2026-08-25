@@ -42,7 +42,7 @@ class DiscoveryTest {
 
     private void persisted(String job, Map<String, Object> values) throws IOException {
         StateStore.at(stateDir).write(job,
-                new StateStore.JobState(null, Instant.now(), values));
+                new StateStore.JobState(null, Instant.now(), null, values));
     }
 
     /**

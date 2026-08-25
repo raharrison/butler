@@ -84,7 +84,7 @@ public final class PlanRenderer {
         persist(out, plan.persist());
         if (plan.notification() != null) {
             out.add(pad("  notify    (not sent)", PREVIEW_INDENT)
-                    + plan.notification().to() + " <- "
+                    + plan.notification().channels() + " <- "
                     + Literals.of(plan.notification().message()));
         }
 

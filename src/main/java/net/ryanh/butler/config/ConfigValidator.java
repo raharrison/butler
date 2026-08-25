@@ -83,12 +83,14 @@ public final class ConfigValidator {
                 checkTemplate(diags, job.path() + "/persist/" + k, v, NAMESPACES));
 
         if (job.notifyPolicy() != null) {
-            // A null "to" was already reported as a missing required key by the loader.
-            String to = job.notifyPolicy().to();
-            if (to != null && !config.notifiers().containsKey(to)) {
-                diags.error(job.path() + "/notify/to",
-                        "no notifier named \"" + to + "\""
-                                + Suggestions.from(to, config.notifiers().keySet()));
+            List<String> to = job.notifyPolicy().to();
+            for (int i = 0; i < to.size(); i++) {
+                if (config.notifiers().containsKey(to.get(i))) {
+                    continue;
+                }
+                String path = job.path() + "/notify/to" + (to.size() > 1 ? "/" + i : "");
+                diags.error(path, "no notifier named \"" + to.get(i) + "\""
+                        + Suggestions.from(to.get(i), config.notifiers().keySet()));
             }
             job.notifyPolicy().messages().forEach((k, v) ->
                     checkTemplate(diags, job.path() + "/notify/" + k, v, NAMESPACES));
@@ -181,7 +183,8 @@ public final class ConfigValidator {
 
         if (job.notifyPolicy() != null) {
             job.notifyPolicy().messages().forEach((outcome, message) -> {
-                boolean success = outcome.equals("success");
+                // A recovery is a success, so its message sees what a success message sees.
+                boolean success = !outcome.equals("failure");
                 checkRendered(diags, job.path() + "/notify/" + outcome, message,
                         success ? onSuccess : onFailure, sections,
                         success ? "succeeds" : "fails");
