@@ -6,13 +6,17 @@ import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.testing.Fixture;
 import net.ryanh.butler.testing.StubServer;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -23,6 +27,19 @@ class HttpStepsTest {
 
     @TempDir
     Path stateDir;
+
+    /**
+     * Where a downloaded file lands.
+     */
+    @TempDir
+    Path dir;
+
+    /**
+     * A temp path spelled with forward slashes, the way a config writes one.
+     */
+    private String at(String name) {
+        return dir.resolve(name).toString().replace('\\', '/');
+    }
 
     private static final String JOB = """
             jobs:
@@ -223,5 +240,220 @@ class HttpStepsTest {
                                 url: http://localhost:8080/health
                                 until: status == 200
                         """).steps().getFirst().warnings());
+    }
+
+    /**
+     * {@code http.download} against the same real server. The digests are the known sha256 of the
+     * bodies served, computed outside this JVM, so a hashing mistake here cannot agree with itself.
+     */
+    @Nested
+    @DisplayName("download")
+    class Download {
+
+        private static final String ARTIFACT = "artifact contents";
+        private static final String ARTIFACT_SHA =
+                "4334ca16f2ec5681429141d70f1738c1651c215830ec3ea5fa5ba83ef0288552";
+        private static final String RELEASE = "a new release";
+        private static final String RELEASE_SHA =
+                "d26eb597b59ae273a0fec9e32ee9f5222976089144c3cd1886142b03a8f6fddb";
+
+        @Test
+        @DisplayName("fetches a file and reports what arrived")
+        void downloads() throws IOException {
+            try (StubServer server = StubServer.serving(200, ARTIFACT)) {
+                Run run = run("""
+                              - uses: http.download
+                                url: %s
+                                to: %s
+                                register: got
+                              - uses: control.assert
+                                that: steps.got.bytes == 17
+                              - uses: control.assert
+                                that: steps.got.sha256 == "%s"
+                              - uses: control.assert
+                                that: steps.got.status == 200
+                        """.formatted(server.url("/api.jar"), at("api.jar"), ARTIFACT_SHA));
+
+                assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+                assertEquals(ARTIFACT, Files.readString(dir.resolve("api.jar")));
+            }
+        }
+
+        @Test
+        @DisplayName("a checksum that matches passes, and nothing is left beside the file")
+        void checksumMatches() throws IOException {
+            try (StubServer server = StubServer.serving(200, ARTIFACT)) {
+                Run run = run("""
+                              - uses: http.download
+                                url: %s
+                                to: %s
+                                checksum: "sha256:%s"
+                        """.formatted(server.url("/api.jar"), at("api.jar"), ARTIFACT_SHA));
+
+                assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+                assertEquals(List.of("api.jar"), names(dir));
+            }
+        }
+
+        @Test
+        @DisplayName("a bare hex checksum is read as a sha256")
+        void bareChecksumIsSha256() {
+            try (StubServer server = StubServer.serving(200, ARTIFACT)) {
+                assertEquals(Run.Status.SUCCESS, run("""
+                              - uses: http.download
+                                url: %s
+                                to: %s
+                                checksum: %s
+                        """.formatted(server.url("/api.jar"), at("api.jar"), ARTIFACT_SHA)).status());
+            }
+        }
+
+        @Test
+        @DisplayName("a checksum that does not match fails, and what was there before stands")
+        void checksumMismatchLeavesTheOldFile() throws IOException {
+            Files.writeString(dir.resolve("api.jar"), "the release that works");
+            try (StubServer server = StubServer.serving(200, "something else entirely")) {
+                Run run = run("""
+                              - uses: http.download
+                                url: %s
+                                to: %s
+                                checksum: "sha256:%s"
+                        """.formatted(server.url("/api.jar"), at("api.jar"), ARTIFACT_SHA));
+
+                assertEquals(Run.Status.FAILED, run.status());
+                assertTrue(run.steps().getFirst().message().startsWith("checksum mismatch: expected"),
+                        run.steps().getFirst().message());
+                assertEquals("the release that works", Files.readString(dir.resolve("api.jar")),
+                        "a download that did not check out must not replace what is serving");
+                assertEquals(List.of("api.jar"), names(dir), "and leaves no part file behind");
+            }
+        }
+
+        @Test
+        @DisplayName("a status that is not 2xx writes no file and quotes what the server said")
+        void badStatusWritesNothing() throws IOException {
+            try (StubServer server = StubServer.serving(404, "no such artifact")) {
+                Run run = run("""
+                              - uses: http.download
+                                url: %s
+                                to: %s
+                        """.formatted(server.url("/api.jar"), at("api.jar")));
+
+                assertEquals(Run.Status.FAILED, run.status());
+                assertTrue(run.steps().getFirst().message().contains("answered 404"),
+                        run.steps().getFirst().message());
+                assertTrue(run.steps().getFirst().message().contains("no such artifact"),
+                        "the body says which artifact it did not find: "
+                                + run.steps().getFirst().message());
+                assertEquals(List.of(), names(dir));
+            }
+        }
+
+        @Test
+        @DisplayName("a successful download replaces what is there")
+        void replacesTheOldFile() throws IOException {
+            Files.writeString(dir.resolve("api.jar"), "the old release");
+            try (StubServer server = StubServer.serving(200, RELEASE)) {
+                Run run = run("""
+                              - uses: http.download
+                                url: %s
+                                to: %s
+                                checksum: "sha256:%s"
+                        """.formatted(server.url("/api.jar"), at("api.jar"), RELEASE_SHA));
+
+                assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+                assertEquals(RELEASE, Files.readString(dir.resolve("api.jar")));
+            }
+        }
+
+        @Test
+        @DisplayName("headers are sent, which is how a private artifact is fetched")
+        void sendsHeaders() {
+            try (StubServer server = StubServer.serving(200, ARTIFACT)) {
+                assertEquals(Run.Status.SUCCESS, run("""
+                              - uses: http.download
+                                url: %s
+                                to: %s
+                                headers:
+                                  Authorization: Bearer hunter2
+                        """.formatted(server.url("/api.jar"), at("api.jar"))).status());
+
+                StubServer.Received request = server.received().getFirst();
+                assertEquals(List.of("Bearer hunter2"), request.headers().get("Authorization"));
+                assertEquals("GET", request.method());
+            }
+        }
+
+        @Test
+        @DisplayName("mkdirs makes the release directory on the way")
+        void makesTheDirectory() {
+            try (StubServer server = StubServer.serving(200, ARTIFACT)) {
+                assertEquals(Run.Status.SUCCESS, run("""
+                              - uses: http.download
+                                url: %s
+                                to: %s
+                                mkdirs: true
+                        """.formatted(server.url("/api.jar"),
+                        at("releases/1.2.4/api.jar"))).status());
+
+                assertTrue(Files.isRegularFile(dir.resolve("releases/1.2.4/api.jar")));
+            }
+        }
+
+        @Test
+        @DisplayName("the plan says what it would fetch and what it would check")
+        void describesTheDownload() {
+            List<String> body = plan("""
+                          - uses: http.download
+                            url: https://artifacts.example/api-1.2.4.jar
+                            to: %s
+                            checksum: "sha256:%s"
+                            mode: "0640"
+                            owner: app
+                            mkdirs: true
+                    """.formatted(at("releases/1.2.4/api.jar"), ARTIFACT_SHA))
+                    .steps().getFirst().body();
+
+            assertEquals("would fetch  https://artifacts.example/api-1.2.4.jar", body.get(0));
+            assertEquals("      to     " + at("releases/1.2.4/api.jar"), body.get(1));
+            assertEquals("      checking sha256, mode 0640, owner app, creating 2 parent directories",
+                    body.get(2));
+        }
+
+        @Test
+        @DisplayName("preflight names a checksum this step cannot check")
+        void preflightWarnsOnAnUncheckableChecksum() {
+            assertEquals(List.of("checksum names md5, and sha256 is the one this step can check"),
+                    plan("""
+                                  - uses: http.download
+                                    url: https://artifacts.example/api.jar
+                                    to: %s
+                                    checksum: "md5:d41d8cd98f00b204e9800998ecf8427e"
+                            """.formatted(at("api.jar"))).steps().getFirst().warnings());
+        }
+
+        @Test
+        @DisplayName("a directory where the file goes fails rather than writing into it")
+        void refusesADirectoryAsDestination() throws IOException {
+            Files.createDirectories(dir.resolve("releases"));
+            Run run = run("""
+                          - uses: http.download
+                            url: https://artifacts.example/api.jar
+                            to: %s
+                    """.formatted(at("releases")));
+
+            assertEquals(Run.Status.FAILED, run.status());
+            assertTrue(run.steps().getFirst().message().startsWith("to: is a directory"),
+                    run.steps().getFirst().message());
+        }
+
+        /**
+         * What is in a directory, so a test can say that nothing else was left in it.
+         */
+        private List<String> names(Path directory) throws IOException {
+            try (Stream<Path> entries = Files.list(directory)) {
+                return entries.map(p -> p.getFileName().toString()).sorted().toList();
+            }
+        }
     }
 }

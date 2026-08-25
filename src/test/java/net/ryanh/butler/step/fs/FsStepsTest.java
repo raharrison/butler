@@ -556,8 +556,7 @@ class FsStepsTest {
         }
 
         @Test
-        @DisplayName("deleting what is not there succeeds, because cleanup runs after work that "
-                + "may not have got that far")
+        @DisplayName("deleting what is not there succeeds")
         void missingIsNotAFailure() {
             Run run = run("""
                           - uses: fs.delete
@@ -660,8 +659,6 @@ class FsStepsTest {
         @Test
         @DisplayName("the root of a filesystem is refused, which an unset var resolves to")
         void refusesTheRoot() {
-            // A plan, deliberately: describe() cannot delete, so this is safe to assert whatever
-            // the guard does. See the note on this class.
             List<String> body = plan("""
                           - uses: fs.delete
                             path: /
@@ -676,7 +673,6 @@ class FsStepsTest {
         @Test
         @DisplayName("an empty path is refused rather than read as the working directory")
         void refusesAnEmptyPath() {
-            // A plan, deliberately, for the same reason.
             assertEquals(List.of("would fail: fs.delete needs a path:"),
                     plan("""
                                   - uses: fs.delete

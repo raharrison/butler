@@ -798,9 +798,8 @@ Three rules, all of them about the paths a config did not mean to name:
    becomes `/`. An empty `path:` is refused for the same reason: it would mean the daemon's
    working directory.
 
-Deleting what is not there **succeeds** and reports `deleted: false`. Cleanup runs after work that
-may not have got far enough to leave anything behind, and a hook that fails on the second run is
-worse than useless. A dry run counts what a recursive delete would take:
+Deleting what is not there **succeeds** and reports `deleted: false`, so a cleanup hook does not
+fail on its second run. A dry run counts what a recursive delete would take:
 
 ```
     3  Clear staging                  fs.delete
@@ -849,10 +848,9 @@ so landing a release as `app:app` does not need a `shell.run chown`.
 Names, not numbers, and applied after `mode:`. Changing a file's owner needs privilege the daemon
 usually has to be given: see [privileges](OPERATING.md#privileges).
 
-- **A name the host does not know fails the step.** The file exists but is not the file the config
-  asked for, and a service that cannot read its own release is worse than a deploy that stopped.
-  `butler validate` cannot catch it, since the config is normally validated somewhere other than
-  the host it runs on, but a dry run **on the host** warns.
+- **A name the host does not know fails the step**, rather than leaving a file the service cannot
+  read. `butler validate` cannot catch it, since the config is normally validated somewhere other
+  than the host it runs on, but a dry run **on the host** warns.
 - **Where the filesystem has no notion of ownership it is skipped**, as `mode:` is. A config
   describes a Linux host whatever machine reads it.
 - `fs.mkdir` applies them to the directory it names, not to any parents `parents: true` created.
@@ -946,6 +944,45 @@ cut off into an account of how far it got - probes, elapsed, last status and bod
 connection is a probe that did not hold rather than a failure, because that is what a service being
 restarted looks like. With no `timeout:` it would poll for as long as it takes, which `--dry-run`
 warns about.
+
+#### `http.download`
+
+Fetch a file, for an artifact that has to be pulled rather than one that appears in a watched
+directory.
+
+| Parameter  | Type       | Default     |                                                     |
+|------------|------------|-------------|-----------------------------------------------------|
+| `url`      | text       |             | **required**                                        |
+| `to`       | path       |             | **required.** The file to write, not the directory. |
+| `headers`  | mapping    | none        | An `Authorization:` for a private artifact.         |
+| `checksum` | text       | not checked | `sha256:<hex>`, or a bare hex digest.               |
+| `mode`     | text       | leave as-is | Octal, quoted: `"0640"`.                            |
+| `owner`    | text       | leave as-is | See [owner and group](#owner-and-group).            |
+| `group`    | text       | leave as-is |                                                     |
+| `mkdirs`   | true/false | `false`     | Create the directories above `to`.                  |
+
+**Outputs:** `path`, `bytes`, `sha256`, `status`.
+
+```yaml
+- uses: http.download
+  url: https://artifacts.example/api/api-${trigger.version}.jar
+  to: ${vars.releases_root}/api/releases/${trigger.version}/api.jar
+  headers: { Authorization: "Bearer ${secret.ARTIFACT_TOKEN}" }
+  checksum: sha256:${steps.manifest.json.sha256}
+  mode: "0640"
+  owner: app
+  mkdirs: true
+```
+
+**Nothing ever reads half a download.** The body is streamed to a temporary file beside `to:` and
+moved over it only once the whole of it has arrived and the checksum has held, so a fetch that
+fails part-way leaves whatever was there before. A status that is not 2xx writes no file at all,
+and the failure quotes what the server answered with instead.
+
+The sha256 is computed on the way past, so it is reported whether or not `checksum:` asked for one.
+
+The step's own `timeout:` covers the request; a download that stalls mid-body is cut off by the
+runtime like any other step that runs out of time.
 
 ### `notify`
 

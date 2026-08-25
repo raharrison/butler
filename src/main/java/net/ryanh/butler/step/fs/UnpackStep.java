@@ -14,12 +14,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Unpacks a tar archive into a directory, for a release that ships as a tarball rather than as one
- * file.
+ * Unpacks a tar archive into a directory.
  *
  * <p>Runs {@code tar}, which detects the compression itself and refuses a member that would escape
- * the destination. That is the one {@code fs.*} step that starts a process, because a tar reader
- * of our own would be a second implementation of something every Linux host already has.
+ * the destination.
  */
 public final class UnpackStep implements StepType<UnpackStep.Config> {
 
@@ -75,8 +73,8 @@ public final class UnpackStep implements StepType<UnpackStep.Config> {
     }
 
     /**
-     * {@code --no-same-owner} because the uids in an archive built elsewhere mean nothing here:
-     * extracting as root would otherwise scatter a build machine's numbering across the host.
+     * {@code --no-same-owner}: the uids in an archive built elsewhere mean nothing on this host,
+     * and extracting as root would otherwise apply them.
      */
     private static List<String> argv(Config c, String from, String to) {
         List<String> argv = new ArrayList<>(List.of("tar", "--no-same-owner"));
@@ -121,7 +119,7 @@ public final class UnpackStep implements StepType<UnpackStep.Config> {
         if (!notes.isEmpty()) {
             lines.add("      " + String.join(", ", notes));
         }
-        // The paths as the config spelled them, so the command reads like the two lines above it.
+        // Paths as the config spelled them, since this line is read rather than run.
         List<String> argv = argv(c, Literals.path(c.from()), Literals.path(c.to()));
         lines.add("      " + new ProcessRunner.Command(argv, null, null, null, null).display());
         return String.join("\n", lines);

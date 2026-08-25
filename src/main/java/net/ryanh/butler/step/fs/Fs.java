@@ -15,10 +15,10 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * What the {@code fs.*} steps share: octal modes, parent directories, and the checks worth making
- * before touching anything.
+ * What a step that writes a file shares: octal modes, ownership, parent directories, and the
+ * checks worth making before touching anything.
  */
-final class Fs {
+public final class Fs {
 
     private Fs() {
     }
@@ -52,7 +52,7 @@ final class Fs {
      * Applies a mode, silently where the filesystem has no permissions to set. Butler deploys to
      * Linux hosts, but a config is authored and tested wherever Java runs.
      */
-    static void applyMode(Path path, String mode) throws IOException {
+    public static void applyMode(Path path, String mode) throws IOException {
         if (mode == null || mode.isBlank()) {
             return;
         }
@@ -66,13 +66,10 @@ final class Fs {
 
     /**
      * Applies an owner and a group, silently where the filesystem has no notion of either, as
-     * {@link #applyMode} does.
-     *
-     * <p>A name the host does not know, or a change it will not permit, fails the step instead: the
-     * file would exist but not be the file the config asked for, and a service that cannot read its
-     * own release is worse than a deploy that stopped.
+     * {@link #applyMode} does. A name the host does not know, or a change it will not permit,
+     * throws.
      */
-    static void applyOwnership(Path path, String owner, String group) throws IOException {
+    public static void applyOwnership(Path path, String owner, String group) throws IOException {
         if (!named(owner) && !named(group)) {
             return;
         }
@@ -98,7 +95,7 @@ final class Fs {
      * How {@code owner:} and {@code group:} read in a plan: {@code owner app:staff},
      * {@code owner app}, {@code group staff}, or null when neither was asked for.
      */
-    static String ownership(String owner, String group) {
+    public static String ownership(String owner, String group) {
         if (named(owner) && named(group)) {
             return "owner " + owner + ":" + group;
         }
@@ -110,10 +107,9 @@ final class Fs {
 
     /**
      * Warns about an owner or group this host has never heard of. Skipped where the filesystem has
-     * no POSIX ownership at all, since a config describing a Linux host is routinely validated
-     * somewhere else.
+     * no POSIX ownership, since a config describing a Linux host is often validated elsewhere.
      */
-    static List<String> ownershipChecks(String owner, String group) {
+    public static List<String> ownershipChecks(String owner, String group) {
         if (!FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
             return List.of();
         }
@@ -137,7 +133,7 @@ final class Fs {
         return List.copyOf(warnings);
     }
 
-    static boolean named(String name) {
+    public static boolean named(String name) {
         return name != null && !name.isBlank();
     }
 
@@ -180,7 +176,7 @@ final class Fs {
     /**
      * How many of a path's parent directories do not exist yet.
      */
-    static int missingParents(Path path) {
+    public static int missingParents(Path path) {
         int missing = 0;
         for (Path p = path.getParent(); p != null && !Files.isDirectory(p); p = p.getParent()) {
             missing++;
@@ -188,7 +184,7 @@ final class Fs {
         return missing;
     }
 
-    static String parents(int count) {
+    public static String parents(int count) {
         return count == 1 ? "1 parent directory" : count + " parent directories";
     }
 

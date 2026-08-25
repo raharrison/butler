@@ -883,7 +883,7 @@ Bold entries are v1.
 | `fs`      | **copy**, **move**, **symlink**, **readlink**, **read**, **list**, **mkdir**, **prune**, **template**, **exists**, **delete**, **unpack**, chmod, chown |
 | `systemd` | **restart**, **start**, **stop**, **reload**, **wait_active**, **status**, enable                                                                       |
 | `shell`   | **run** (via shell), **exec** (argv, no shell)                                                                                                          |
-| `http`    | **request**, **wait**                                                                                                                                   |
+| `http`    | **request**, **wait**, **download**                                                                                                                     |
 | `notify`  | **send** (slack, discord, generic webhook, ntfy; email later)                                                                                           |
 | `control` | **set**, **assert**, **sleep**, **log**, **fail**, parallel, group                                                                                      |
 | `docker`  | pull, compose, run, prune                                                                                                                               |
@@ -898,10 +898,10 @@ Three conventions this vocabulary settled on:
   because those three are the whole of what ranking a directory means and a config that needs more
   has `shell.run`.
 - **`fs.unpack` is the one `fs.*` step that starts a process.** Every Linux host has a tar that
-  detects the compression itself and refuses a member whose name would escape the destination; a
-  reader of our own would be a second implementation of that, with our own bugs in it. It goes
-  through `spi/ProcessRunner` like any other command, so a test asserts on the command it built
-  rather than forking one.
+  detects the compression itself and refuses a member whose name would escape the destination, so
+  a tar reader of our own would be a second implementation of it. It goes through
+  `spi/ProcessRunner` like any other command, so a test asserts on the command it built rather
+  than forking one.
 - **The `systemd` verbs that mutate a unit put `sudo` in front by default**, matching the sudoers
   allowlist of §10.2. That is separate from `run_as:`, which says which user to become rather than
   that root is required; `sudo: false` turns it off for a user unit.
@@ -917,6 +917,7 @@ Three conventions this vocabulary settled on:
 | **`manual`**         | fired by `butler trigger <job>`; the testing workhorse                                                                          |
 | `http.webhook`       | needs the admin server                                                                                                          |
 | `docker.image`       | registry digest poll                                                                                                            |
+| `http.version`       | poll a URL for a version, the trigger half of `http.download` (§11)                                                             |
 | `command.output`     | run a command on an interval, fire when stdout changes                                                                          |
 | `systemd.state`      | unit entered/left a state                                                                                                       |
 
@@ -1181,6 +1182,11 @@ three are in the order they are worth doing; the rest are decisions not to build
   reading its history *remotely*, plus CI push-notification, which is why it is first in line
   after v1. Locally both are already answered, by `butler trigger` and `butler runs` (§10).
 - **Docker / compose** steps and registry polling.
+- **A trigger that watches a URL.** `http.download` (§7.2) is the half of pulling an artifact that
+  needs no new concepts: a job already knows how to fetch one, given a version. Deciding that a
+  *new* version exists means polling a URL, reading whatever shape that endpoint answers with, and
+  a dedupe key over it, which is a design rather than a step. Wait for a case that a
+  `schedule.every` job with a `discover:` block cannot already express.
 - **Job templates** (`extends:` + `with:`). Once there are more than two apps this becomes the
   main DRY lever. It is a pure config-expansion pass before validation, so it can be added
   without touching the runtime.

@@ -260,9 +260,8 @@ class RunRecorderTest {
             RunRecorder recorder = recorder();
             recorder.record(run, KEEP_EVERYTHING);
 
-            // Whole-record equality: a field the writer drops shows up here as a difference. A
-            // run's discover entries never carry warnings, which are a plan's preflight findings,
-            // so nothing is lost by the record not holding them.
+            // Whole-record equality: a field the writer drops shows up here as a difference.
+            // Warnings are a plan's preflight findings, so a run's entries never carry any.
             assertEquals(run, recorder.read(run.id()));
         }
 

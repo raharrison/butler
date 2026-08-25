@@ -326,6 +326,7 @@ build you are running. Full parameter tables, defaults and outputs are in
 | `systemd.wait_active` | Wait for a unit to reach a state, changing nothing.                             |
 | `systemd.status`      | Report a unit's state, sub-state and main PID.                                  |
 | `http.request`        | Make one HTTP request and report the response.                                  |
+| `http.download`       | Fetch a file, checking the sha256 before it lands.                              |
 | `http.wait`           | Poll a URL until a condition holds.                                             |
 | `notify.send`         | Send a message through a declared notifier.                                     |
 

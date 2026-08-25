@@ -24,5 +24,6 @@ net.ryanh.butler.step.systemd.ReloadStep
 net.ryanh.butler.step.systemd.WaitActiveStep
 net.ryanh.butler.step.systemd.StatusStep
 net.ryanh.butler.step.http.RequestStep
+net.ryanh.butler.step.http.DownloadStep
 net.ryanh.butler.step.http.WaitStep
 net.ryanh.butler.step.notify.SendStep

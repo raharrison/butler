@@ -15,12 +15,9 @@ import java.util.List;
 /**
  * Deletes one named path.
  *
- * <p>A directory with anything in it needs {@code recursive: true}, so a path that turns out to be
- * more than the author expected stops the run rather than taking a tree with it. A symlink is
- * removed as the link it is, leaving its target alone.
- *
- * <p>Deleting what is not there succeeds and reports {@code deleted: false}: cleanup runs after
- * work that may not have got far enough to leave anything behind.
+ * <p>A directory with anything in it needs {@code recursive: true}. A symlink is removed as the
+ * link it is, leaving its target alone. Deleting what is not there succeeds and reports
+ * {@code deleted: false}.
  */
 public final class DeleteStep implements StepType<DeleteStep.Config> {
 
@@ -128,7 +125,6 @@ public final class DeleteStep implements StepType<DeleteStep.Config> {
             if (!Files.isDirectory(path)) {
                 return "would delete " + shown;
             }
-            // What is about to go is the thing worth reading twice before a run for real.
             long entries = Fs.entryCount(path) - 1;
             return "would delete " + shown + "\n      a directory holding " + entries
                     + (entries == 1 ? " entry" : " entries");
