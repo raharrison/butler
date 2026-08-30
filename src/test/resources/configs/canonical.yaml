@@ -11,6 +11,7 @@ settings:
   default_job_timeout: 1h
   run_retention: { count: 200, age: 30d }
   plugins_dir: /var/lib/butler/plugins
+  process_capture_bytes: 262144
 
 secrets:
   from_env: true

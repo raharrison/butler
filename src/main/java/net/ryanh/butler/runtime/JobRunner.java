@@ -301,7 +301,7 @@ public final class JobRunner {
             StepResult result = executed.result();
             StepResolver.record(def, result, ctx);
             steps.add(new Run.Step(section, def.label(), def.uses(), result.status(),
-                    result.duration(), result.attempts(), result.message()));
+                    result.duration(), result.attempts(), result.message(), result.outputs()));
 
             if (result.isFailed()) {
                 log.error("failed after {} attempt(s): {}", result.attempts(), result.message());

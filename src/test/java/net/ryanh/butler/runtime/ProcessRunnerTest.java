@@ -65,6 +65,19 @@ class ProcessRunnerTest {
     }
 
     @Test
+    @DisplayName("settings.process_capture_bytes changes the cap, not just the default")
+    void aConfiguredCaptureLimitIsHonoured() throws Exception {
+        ProcessRunner configured = new ForkingProcessRunner(100);
+        ProcessRunner.Completed done = configured.run(
+                command("flood", String.valueOf(4096)).timeout(Duration.ofSeconds(30)));
+
+        assertTrue(done.ok());
+        assertTrue(done.stdout().length() < 100 + 100,
+                "capture is bounded to the configured limit, got " + done.stdout().length());
+        assertTrue(done.stdout().startsWith("[earlier output dropped]"));
+    }
+
+    @Test
     void aTimeoutKillsTheProcess() throws Exception {
         Instant started = Instant.now();
         ProcessRunner.Completed done = runner.run(

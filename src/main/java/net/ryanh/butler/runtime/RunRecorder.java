@@ -189,6 +189,7 @@ public final class RunRecorder {
         out.put("duration", Durations.format(s.duration() == null ? Duration.ZERO : s.duration()));
         out.put("attempts", s.attempts());
         out.put("message", s.message());
+        out.put("outputs", s.outputs());
         return out;
     }
 
@@ -307,7 +308,7 @@ public final class RunRecorder {
             steps.add(new Run.Step(str(s.get("section")), str(s.get("label")), str(s.get("uses")),
                     status(s.get("status"), StepResult.Status.class),
                     Durations.parse(str(s.get("duration"))), (int) number(s.get("attempts")),
-                    str(s.get("message"))));
+                    str(s.get("message")), values(s.get("outputs"))));
         }
 
         Map<?, ?> when = doc.get("when") instanceof Map<?, ?> m ? m : null;

@@ -326,6 +326,7 @@ public final class ConfigLoader {
                 runRetention(c.object("run_retention")).or(d.runRetention());
 
         Path plugins = c.path("plugins_dir", null);
+        int captureBytes = c.integer("process_capture_bytes", d.processCaptureBytes());
         c.rejectUnknownKeys();
 
         if (maxRuns < 1) {
@@ -340,8 +341,13 @@ public final class ConfigLoader {
             c.diagnostics().error("/settings/default_job_timeout",
                     "must be more than zero: every run would time out before its first step");
         }
+        if (captureBytes < 0) {
+            c.diagnostics().error("/settings/process_capture_bytes",
+                    "must not be negative, found " + captureBytes);
+        }
         return new ButlerConfig.Settings(
-                stateDir, logFormat, maxRuns, poll, grace, jobTimeout, retention, plugins);
+                stateDir, logFormat, maxRuns, poll, grace, jobTimeout, retention, plugins,
+                captureBytes);
     }
 
     /**

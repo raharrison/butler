@@ -230,6 +230,7 @@ settings: # all optional, defaults shown
   default_job_timeout: 1h        # bound on a job that sets no timeout: of its own
   run_retention: { count: 200, age: 30d }  # per job; a job may override it
   plugins_dir: /var/lib/butler/plugins     # jars of third-party steps
+  process_capture_bytes: 262144            # kept per stream (stdout/stderr) for a process step
 
 secrets:
   from_env: true                 # ${secret.FOO} resolves from $FOO

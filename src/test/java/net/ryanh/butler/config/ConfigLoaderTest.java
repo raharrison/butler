@@ -118,6 +118,7 @@ class ConfigLoaderTest {
             assertEquals(Duration.ofSeconds(5), s.pollInterval());
             assertEquals(200, s.runRetention().count());
             assertEquals(Duration.ofDays(30), s.runRetention().age());
+            assertEquals(262144, s.processCaptureBytes());
         }
 
         @Test
@@ -380,6 +381,59 @@ class ConfigLoaderTest {
                     """);
             assertEquals(Duration.ofHours(1),
                     r.config().timeoutFor(r.config().jobs().get("j")));
+        }
+    }
+
+    @Nested
+    @DisplayName("process_capture_bytes")
+    class ProcessCaptureBytes {
+
+        private static final String YAML = """
+                settings:
+                  process_capture_bytes: %s
+                
+                jobs:
+                  j:
+                    on: [{uses: manual}]
+                    steps: [{uses: control.log}]
+                """;
+
+        @Test
+        @DisplayName("a config that names one is honoured")
+        void isHonoured() {
+            var r = loadAndValidate(YAML.formatted(4096));
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertEquals(4096, r.config().settings().processCaptureBytes());
+        }
+
+        @Test
+        @DisplayName("a config that says nothing gets the built-in default")
+        void builtInDefault() {
+            var r = loadAndValidate("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                    """);
+            assertEquals(262144, r.config().settings().processCaptureBytes());
+            assertEquals(262144, ButlerConfig.Settings.defaults().processCaptureBytes());
+        }
+
+        @Test
+        @DisplayName("zero is allowed: it means keep nothing, not an error")
+        void zeroIsAllowed() {
+            var r = loadAndValidate(YAML.formatted(0));
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertEquals(0, r.config().settings().processCaptureBytes());
+        }
+
+        @Test
+        @DisplayName("negative is refused")
+        void negativeIsRefused() {
+            var r = loadAndValidate(YAML.formatted(-1));
+            var d = DiagnosticsTest.only(r.diagnostics());
+            assertEquals("/settings/process_capture_bytes", d.path());
+            assertTrue(d.message().contains("must not be negative"), d.message());
         }
     }
 

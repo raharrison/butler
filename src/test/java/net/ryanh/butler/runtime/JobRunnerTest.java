@@ -1,10 +1,8 @@
 package net.ryanh.butler.runtime;
 
 import net.ryanh.butler.config.ConfigLoader;
-import net.ryanh.butler.spi.Event;
-import net.ryanh.butler.spi.RunContext;
-import net.ryanh.butler.spi.StepResult;
-import net.ryanh.butler.spi.StepType;
+import net.ryanh.butler.spi.*;
+import net.ryanh.butler.testing.FakeProcessRunner;
 import net.ryanh.butler.testing.Fixture;
 import net.ryanh.butler.testing.StubServer;
 import net.ryanh.butler.util.Durations;
@@ -46,10 +44,14 @@ class JobRunnerTest {
     }
 
     private JobRunner runner(String yaml, Cancellation cancel) {
+        return runner(yaml, cancel, new FakeProcessRunner());
+    }
+
+    private JobRunner runner(String yaml, Cancellation cancel, ProcessRunner processes) {
         StepRegistry steps = StepRegistry.discover();
         ConfigLoader.Result result = config(yaml);
         assertFalse(result.diagnostics().hasErrors(), result.diagnostics().render("test.yaml"));
-        return new JobRunner(Fixture.environment(result, steps, stateDir), cancel);
+        return new JobRunner(Fixture.environment(result, steps, stateDir, processes), cancel);
     }
 
     private ConfigLoader.Result config(String yaml) {
@@ -87,6 +89,32 @@ class JobRunnerTest {
             assertEquals(Run.Status.SUCCESS, run.status());
             assertEquals(List.of("One", "Two"), run.steps().stream().map(Run.Step::label).toList());
             assertNull(run.failedStep());
+        }
+
+        @Test
+        @DisplayName("a step's own outputs land on the Run, not just its status line")
+        void stepOutputsAreKeptOnTheRun() {
+            String yaml = """
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps:
+                          - name: Greet
+                            uses: shell.exec
+                            argv: [ echo, hi ]
+                          - name: Set nothing much
+                            uses: control.log
+                            message: quiet
+                    """;
+            FakeProcessRunner processes =
+                    new FakeProcessRunner().replying(0, "line one\nline two\n", "");
+            Run run = runner(yaml, Cancellation.none(), processes)
+                    .run(config(yaml).config().jobs().get("j"), new Event("manual", Map.of(), null));
+
+            assertEquals("line one\nline two\n", step(run, "Greet").outputs().get("stdout"));
+            assertEquals(0L, step(run, "Greet").outputs().get("exit_code"));
+            assertEquals(Map.of(), step(run, "Set nothing much").outputs(),
+                    "a step with nothing to report keeps an empty map, not a missing one");
         }
 
         @Test

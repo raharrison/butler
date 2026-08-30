@@ -4,10 +4,7 @@ import net.ryanh.butler.spi.StepResult;
 import net.ryanh.butler.util.Durations;
 import net.ryanh.butler.util.Literals;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Renders a finished {@link Run} the way {@link PlanRenderer} renders a {@link Plan}, so the two
@@ -86,6 +83,32 @@ public final class RunRenderer {
             String marker = ran ? String.valueOf(++number) : "-";
             out.add("    " + marker + "  " + PlanRenderer.pad(s.label(), width + 2)
                     + PlanRenderer.pad(s.uses(), 16) + outcome(s));
+            output(out, s);
+        }
+    }
+
+    /**
+     * The fields of a step's own outputs worth showing inline. The full text always lands in the
+     * run record on disk; this is a terminal-sized preview of it.
+     */
+    private static final Set<String> OUTPUT_FIELDS = Set.of("stdout", "stderr", "body");
+    private static final int MAX_OUTPUT_LINES = 20;
+
+    private static void output(List<String> out, Run.Step s) {
+        for (String field : OUTPUT_FIELDS) {
+            if (!(s.outputs().get(field) instanceof String text) || text.isBlank()) {
+                continue;
+            }
+            String[] lines = text.strip().split("\n");
+            out.add(PlanRenderer.BODY_INDENT + field + ":");
+            int shown = Math.min(lines.length, MAX_OUTPUT_LINES);
+            for (int i = 0; i < shown; i++) {
+                out.add(PlanRenderer.BODY_INDENT + "  " + lines[i]);
+            }
+            if (shown < lines.length) {
+                out.add(PlanRenderer.BODY_INDENT + "  ... " + (lines.length - shown)
+                        + " more line(s) - full text is in the run record");
+            }
         }
     }
 

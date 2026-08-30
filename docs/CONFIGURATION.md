@@ -55,16 +55,17 @@ in, with that file's line and column.
 
 ### `settings`
 
-| Key                   | Default                  | Meaning                                                                                              |
-|-----------------------|--------------------------|------------------------------------------------------------------------------------------------------|
-| `state_dir`           | `/var/lib/butler`        | Where per-job state and run records are written.                                                     |
-| `log_format`          | `json`                   | `json` or `text`. Applies to the daemon; interactive commands are always text.                       |
-| `max_concurrent_runs` | `4`                      | Global bound on runs in flight, across all jobs. At least 1.                                         |
-| `poll_interval`       | `5s`                     | Default polling interval for polling triggers. Must be more than zero.                               |
-| `shutdown_grace`      | `2m`                     | How long a shutdown lets in-flight runs finish before cancelling them.                               |
-| `default_job_timeout` | `1h`                     | How long a job may run when it sets no `timeout:` of its own. Must be more than zero.                |
-| `run_retention`       | `{count: 200, age: 30d}` | Default run history per job. Both apply: whichever drops a record first wins. A job may override it. |
-| `plugins_dir`         | none                     | Directory of jars holding third-party steps, triggers or notifiers.                                  |
+| Key                     | Default                  | Meaning                                                                                                                                                                                                                      |
+|-------------------------|--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `state_dir`             | `/var/lib/butler`        | Where per-job state and run records are written.                                                                                                                                                                             |
+| `log_format`            | `json`                   | `json` or `text`. Applies to the daemon; interactive commands are always text.                                                                                                                                               |
+| `max_concurrent_runs`   | `4`                      | Global bound on runs in flight, across all jobs. At least 1.                                                                                                                                                                 |
+| `poll_interval`         | `5s`                     | Default polling interval for polling triggers. Must be more than zero.                                                                                                                                                       |
+| `shutdown_grace`        | `2m`                     | How long a shutdown lets in-flight runs finish before cancelling them.                                                                                                                                                       |
+| `default_job_timeout`   | `1h`                     | How long a job may run when it sets no `timeout:` of its own. Must be more than zero.                                                                                                                                        |
+| `run_retention`         | `{count: 200, age: 30d}` | Default run history per job. Both apply: whichever drops a record first wins. A job may override it.                                                                                                                         |
+| `plugins_dir`           | none                     | Directory of jars holding third-party steps, triggers or notifiers.                                                                                                                                                          |
+| `process_capture_bytes` | `262144`                 | Bytes kept per stream for a process-backed step (`shell.*`, `systemd.*`, `fs.unpack`) - stdout and stderr each get this much. The tail survives; the head is dropped once it's hit. Must not be negative; `0` keeps nothing. |
 
 ### `secrets`
 
@@ -712,7 +713,7 @@ that wants otherwise writes `trim(value)`.
 | Parameter   | Type   | Default   |                                                                                       |
 |-------------|--------|-----------|---------------------------------------------------------------------------------------|
 | `path`      | path   |           | **required**                                                                          |
-| `max_bytes` | number | `1048576` | Refuse anything larger, since the contents reach the run's memory and its state file. |
+| `max_bytes` | number | `1048576` | Refuse anything larger, since the contents reach the run's memory and its run record. |
 
 **Outputs:** `value`, `bytes`.
 

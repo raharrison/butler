@@ -160,8 +160,9 @@ as `butler`.
 
 Secrets come from the environment or a separate secrets file rather than inline. They are **not
 redacted** in v1 from logs, from captured process output, or from the run records under
-`state_dir`; the guidance is not to echo them. A step that fails carries the tail of its output into
-its run record, so a script that prints a secret writes it to disk.
+`state_dir`; the guidance is not to echo them. **Every** step's captured output lands in its run
+record, success or failure, not just a failing step's tail, so a script that prints a secret writes
+it to disk regardless of how the step ends.
 
 ## Logging
 
@@ -291,7 +292,17 @@ The records themselves are plain JSON, for anything those two do not answer:
     "status" : "ok",
     "duration" : "1ms",
     "attempts" : 1,
-    "message" : null
+    "message" : null,
+    "outputs" : { }
+  }, {
+    "section" : "step",
+    "label" : "Run the migration",
+    "uses" : "shell.run",
+    "status" : "ok",
+    "duration" : "840ms",
+    "attempts" : 1,
+    "message" : null,
+    "outputs" : { "stdout" : "migrating to 1.2.4...\ndone\n", "stderr" : "", "exit_code" : 0 }
   } ],
   "persisted" : { "deployed_version" : "1.2.4" },
   "notified" : null
@@ -307,6 +318,18 @@ The records themselves are plain JSON, for anything those two do not answer:
 | `steps`     | Every step, with its `section` (`step`, `on_failure`, `on_success`, `always`), status, duration and attempts. |
 | `persisted` | What was written to `state.*`. Empty unless the run succeeded.                                                |
 | `notified`  | The channel and the rendered message, or null.                                                                |
+
+**`steps[].outputs`** is the step's own result fields - `stdout`/`stderr`/`exit_code` for a
+process, `body`/`json` for an HTTP step, `path`/`bytes` for a file step - kept **in full**, success
+or failure, bounded only by the same caps that already apply while the run is in flight:
+`settings.process_capture_bytes` per stream for a process (`shell.*`, `systemd.*`, `fs.unpack`,
+262144 by default), and each step's own `max_bytes` for `fs.read` and the `http.*` steps (1MiB by
+default). This is what makes the record the whole
+story: `jq '.steps[] | select(.label == "Run the migration") | .outputs.stdout'` answers "what did
+that step actually print" without the daemon's own logs, which only ever hold a status line per
+step (see [Logging](#logging) above). `butler show` prints a short indented tail of `stdout`,
+`stderr` or `body` under a step that has any - the full text is always in the JSON, whether or not
+the terminal showed all of it.
 
 `runs/index.jsonl` carries the same head fields as each record, one line per run, so the two cannot
 disagree:
@@ -377,15 +400,16 @@ empty rather than refusing to start.
 
 ## Tuning
 
-| Setting                | When to change it                                                                                                                                         |
-|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `poll_interval`        | The cadence of every polling trigger. `5s` on one directory costs nothing; raise it for a network filesystem.                                             |
-| `settle` (per trigger) | Raise it if artifacts arrive slowly. Too low deploys a half-uploaded file, which settle exists to prevent.                                                |
-| `max_concurrent_runs`  | Total runs in flight across all jobs. Raise it only if separate jobs genuinely need to overlap; within a job the concurrency group already serialises.    |
-| `shutdown_grace`       | Raise it, and `TimeoutStopSec` with it, if a deploy legitimately takes longer than 2 minutes.                                                             |
-| `default_job_timeout`  | The backstop on a job that names no `timeout:`. Raise it if a pipeline legitimately runs past an hour, but prefer giving that one job its own `timeout:`. |
-| `run_retention`        | Count and age together, per job. Records are small; the default keeps each job 200 or 30 days.                                                            |
-| `BUTLER_JAVA_OPTS`     | A heap ceiling on a small VPS: `-Xmx128m` is ample. Butler holds one run's captured output at a time, bounded at 256KB per stream.                        |
+| Setting                 | When to change it                                                                                                                                                                                                                                                                                                                                              |
+|-------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `poll_interval`         | The cadence of every polling trigger. `5s` on one directory costs nothing; raise it for a network filesystem.                                                                                                                                                                                                                                                  |
+| `settle` (per trigger)  | Raise it if artifacts arrive slowly. Too low deploys a half-uploaded file, which settle exists to prevent.                                                                                                                                                                                                                                                     |
+| `max_concurrent_runs`   | Total runs in flight across all jobs. Raise it only if separate jobs genuinely need to overlap; within a job the concurrency group already serialises.                                                                                                                                                                                                         |
+| `shutdown_grace`        | Raise it, and `TimeoutStopSec` with it, if a deploy legitimately takes longer than 2 minutes.                                                                                                                                                                                                                                                                  |
+| `default_job_timeout`   | The backstop on a job that names no `timeout:`. Raise it if a pipeline legitimately runs past an hour, but prefer giving that one job its own `timeout:`.                                                                                                                                                                                                      |
+| `run_retention`         | Count and age together, per job. A record holds every step's full output, so a job whose steps capture a lot per run (a chatty `shell.run`, a large HTTP body) grows its own history faster than a quiet one; `run_retention`, `process_capture_bytes` and each step's own `max_bytes` are what bound that. The default keeps each job 200 records or 30 days. |
+| `process_capture_bytes` | How much of a process step's stdout/stderr is kept, per stream. Lower it on a disk-constrained host or where a step's output is sensitive; `0` keeps none of it. Raise it to debug a step whose useful output is longer than the 262144-byte default.                                                                                                          |
+| `BUTLER_JAVA_OPTS`      | A heap ceiling on a small VPS: `-Xmx128m` is ample. Butler holds one run's captured output at a time, bounded by `process_capture_bytes` per stream (262144 by default).                                                                                                                                                                                       |
 
 Threads are not a knob. One virtual thread per watcher and per run, so a hundred jobs cost a
 hundred parked threads and no pool to size.

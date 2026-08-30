@@ -28,10 +28,23 @@ public final class ForkingProcessRunner implements ProcessRunner {
     private static final Logger log = LoggerFactory.getLogger(ForkingProcessRunner.class);
 
     /**
-     * How much of each stream is kept: enough to diagnose a failure from the run record, small
-     * enough that a process printing a progress bar for an hour costs nothing.
+     * Default {@link #captureBytes}: enough to diagnose a failure, small enough that a chatty
+     * process costs nothing.
      */
     static final int CAPTURE_LIMIT = 256 * 1024;
+
+    /**
+     * Bytes kept per stream, from {@code settings.process_capture_bytes}.
+     */
+    private final int captureBytes;
+
+    public ForkingProcessRunner() {
+        this(CAPTURE_LIMIT);
+    }
+
+    public ForkingProcessRunner(int captureBytes) {
+        this.captureBytes = captureBytes;
+    }
 
     /**
      * How long a killed process gets to exit before it is killed harder.
@@ -132,8 +145,8 @@ public final class ForkingProcessRunner implements ProcessRunner {
         }
     }
 
-    private static Drain drain(String name, InputStream stream) {
-        Ring ring = new Ring();
+    private Drain drain(String name, InputStream stream) {
+        Ring ring = new Ring(captureBytes);
         Thread thread = Thread.ofVirtual().name("drain-" + name).start(() -> {
             try (Reader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
                 char[] chunk = new char[8192];
@@ -177,18 +190,23 @@ public final class ForkingProcessRunner implements ProcessRunner {
     }
 
     /**
-     * Keeps the last {@link #CAPTURE_LIMIT} characters written to it. The tail is what says why a
-     * command failed; the head of a 10MB build log is not worth the heap.
+     * Keeps the last {@code limit} characters written to it. The tail is what says why a command
+     * failed; the head of a 10MB build log is not worth the heap.
      */
     private static final class Ring {
 
         private final StringBuilder buffer = new StringBuilder();
+        private final int limit;
         private boolean truncated;
+
+        Ring(int limit) {
+            this.limit = limit;
+        }
 
         synchronized void append(char[] chunk, int length) {
             buffer.append(chunk, 0, length);
-            if (buffer.length() > CAPTURE_LIMIT) {
-                buffer.delete(0, buffer.length() - CAPTURE_LIMIT);
+            if (buffer.length() > limit) {
+                buffer.delete(0, buffer.length() - limit);
                 truncated = true;
             }
         }

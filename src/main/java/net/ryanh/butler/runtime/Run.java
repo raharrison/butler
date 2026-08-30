@@ -37,10 +37,13 @@ public record Run(String id, String job, String trigger, Map<String, Object> fac
     }
 
     /**
-     * One step as it actually went.
+     * One step as it actually went. {@code outputs} is the step's own result fields - {@code
+     * stdout}/{@code stderr} for a process, {@code body}/{@code json} for an HTTP step - kept in
+     * full so the record answers "what happened" without the daemon's own logs.
      */
     public record Step(String section, String label, String uses, StepResult.Status status,
-                       Duration duration, int attempts, String message) {
+                       Duration duration, int attempts, String message,
+                       Map<String, Object> outputs) {
     }
 
     public boolean ok() {

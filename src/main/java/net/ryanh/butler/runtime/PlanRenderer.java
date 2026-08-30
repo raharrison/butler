@@ -31,9 +31,10 @@ public final class PlanRenderer {
     private static final int WARNING_LABEL = 12;
 
     /**
-     * Indent for the lines a step contributes below its own heading.
+     * Indent for the lines a step contributes below its own heading. Shared with
+     * {@link RunRenderer}, which prints a step's captured output the same way.
      */
-    private static final String BODY_INDENT = "         ";
+    static final String BODY_INDENT = "         ";
 
     private PlanRenderer() {
     }

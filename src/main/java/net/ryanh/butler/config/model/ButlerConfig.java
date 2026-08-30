@@ -41,7 +41,8 @@ public record ButlerConfig(
             Duration shutdownGrace,
             Duration defaultJobTimeout,
             RunRetention runRetention,
-            Path pluginsDir) {
+            Path pluginsDir,
+            int processCaptureBytes) {
 
         public static Settings defaults() {
             return new Settings(
@@ -52,7 +53,8 @@ public record ButlerConfig(
                     Duration.ofMinutes(2),
                     Duration.ofHours(1),
                     new RunRetention(200, Duration.ofDays(30)),
-                    null);
+                    null,
+                    256 * 1024);
         }
     }
 
