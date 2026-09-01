@@ -21,6 +21,7 @@ The [README](../README.md) is the guide to writing a config;
 | `/usr/lib/butler/butler.jar` | `root:root`     | `0644` | The shaded jar. The only artifact that matters.            |
 | `/usr/bin/butler`            | `root:root`     | `0755` | Launcher script, `exec java -jar`.                         |
 | `/etc/butler/butler.yaml`    | `root:butler`   | `0640` | The config. Readable by the daemon, writable only by root. |
+| `/etc/butler/jobs/*.yaml`    | `root:butler`   | `0640` | Optional, whatever the config's `include:` names.          |
 | `/etc/butler/secrets.yaml`   | `root:butler`   | `0640` | Optional, if `secrets: files:` names it.                   |
 | `/etc/sudoers.d/butler`      | `root:root`     | `0440` | The allowlist, if any step needs root.                     |
 | `/var/lib/butler`            | `butler:butler` | `0750` | State directory: per-job state and run history.            |
@@ -33,6 +34,7 @@ sudo install -D -m0755 packaging/butler /usr/bin/butler
 sudo install -d -m0750 -o butler -g butler /var/lib/butler
 
 sudo install -D -m0640 -o root -g butler butler.yaml /etc/butler/butler.yaml
+sudo install -D -m0640 -o root -g butler jobs/api.yaml /etc/butler/jobs/api.yaml   # if included
 sudo install -D -m0644 packaging/butler.service /etc/systemd/system/butler.service
 ```
 

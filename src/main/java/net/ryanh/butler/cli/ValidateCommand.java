@@ -25,7 +25,8 @@ public final class ValidateCommand implements Callable<Integer> {
         var diags = result.diagnostics();
 
         if (diags.isEmpty()) {
-            configOptions.configs().forEach(file -> System.out.println(file + ": ok"));
+            // Every file read, not every file named: include: brings in the rest.
+            result.files().forEach(file -> System.out.println(file + ": ok"));
             return ButlerCommand.EXIT_OK;
         }
 

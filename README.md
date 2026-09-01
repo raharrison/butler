@@ -208,9 +208,10 @@ butler validate -c base.yaml -c api.yaml    # several files, read as one config
 
 Exit codes are `0` ok, `1` failure or validation errors, `2` bad usage.
 
-**Repeat `--config` to spread one config over several files.** They are read in order and merged:
-`jobs:`, `notifiers:`, `vars:` and `secrets: files:` accumulate and a name may only be defined
-once, while `settings:` is policy and belongs in a single file. See
+**One config, several files.** A config names the others it is made of with `include:`, and
+`--config` may be repeated as well. They are read in order and merged: `jobs:`, `notifiers:`,
+`vars:` and `secrets: files:` accumulate and a name may only be defined once, while `settings:` is
+policy and belongs in a single file. See
 [Several files](docs/CONFIGURATION.md#several-files).
 
 Logs go to stderr; stdout carries whatever you asked for, so `butler trigger api --dry-run | less`

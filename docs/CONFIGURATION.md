@@ -18,6 +18,7 @@ straight from the registry, so it never falls behind the build you are running.
 ```yaml
 version: 1
 
+include: [ ... ]         # other files read as part of this config
 settings: { ... }        # daemon-wide policy
 secrets: { ... }         # where ${secret.*} comes from
 vars: { ... }            # values shared by every job
@@ -33,9 +34,26 @@ A repeated key is an error rather than last-one-wins.
 
 ### Several files
 
-`--config` may be given more than once. The files are read in order and merged into one config, so
-a job in the last file uses `vars:` from the first, and `notify: {to: ops}` finds a notifier
-wherever it was defined.
+One config may be spread over several files. They are read in order and merged, so a job in the
+last file uses `vars:` from the first, and `notify: {to: ops}` finds a notifier wherever it was
+defined.
+
+**`include:` names them in the config**, so every command takes one `--config`:
+
+```yaml
+# /etc/butler/butler.yaml
+include:
+  - jobs/api.yaml
+  - jobs/backup.yaml
+```
+
+An entry resolves against the directory of the file that names it, not the working directory. One
+path reads as well as a list. Any file may include, and each is read immediately after the file
+that named it. A file named twice is read once, which is also what ends a cycle. An entry naming
+nothing, or naming a directory, is an error.
+
+**`--config` may also be given more than once**, and the two compose: a file named both ways is
+still read once.
 
 ```bash
 butler --config /etc/butler/butler.yaml \
@@ -48,6 +66,7 @@ butler --config /etc/butler/butler.yaml \
 | `jobs`, `notifiers`, `vars`, `secrets.files` | Accumulate. Defining a name twice is an error.        |
 | `settings`, `secrets.from_env`               | Policy: one file only. Setting one twice is an error. |
 | `version`                                    | Any file may carry it; each must say `1`.             |
+| `include`                                    | Expanded before the merge. Any file may carry it.     |
 
 Later files add, never override. Validation judges the whole, so a file holding only `vars:` is
 fine and a set of files that between them define no jobs is not. Each problem names the file it is

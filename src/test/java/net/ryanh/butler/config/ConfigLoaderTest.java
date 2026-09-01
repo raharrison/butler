@@ -9,6 +9,7 @@ import net.ryanh.butler.runtime.TriggerRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -758,6 +759,231 @@ class ConfigLoaderTest {
                     """));
             assertTrue(DiagnosticsTest.only(r.diagnostics()).message().contains("no jobs defined"),
                     r.diagnostics().render("x"));
+        }
+    }
+
+    @Nested
+    @DisplayName("a config that names its own files with include:")
+    class Included {
+
+        @TempDir
+        Path dir;
+
+        private static final String JOB = """
+                jobs:
+                  %s:
+                    on: [{uses: manual}]
+                    steps: [{uses: control.log, message: hi}]
+                """;
+
+        private Path write(String name, String yaml) throws IOException {
+            Path file = dir.resolve(name);
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, yaml);
+            return file;
+        }
+
+        private ConfigLoader.Result load(Path root) throws IOException {
+            return validate(ConfigLoader.load(root));
+        }
+
+        @Test
+        @DisplayName("an entry resolves against the including file's directory, not the "
+                + "working one")
+        void relativeToTheIncludingFile() throws IOException {
+            write("jobs/api.yaml", JOB.formatted("api"));
+            Path root = write("butler.yaml", """
+                    include:
+                      - jobs/api.yaml
+                    """);
+            var r = load(root);
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertNotNull(r.config().jobs().get("api"));
+        }
+
+        @Test
+        @DisplayName("one path reads as well as a list of them")
+        void oneEntryNeedsNoList() throws IOException {
+            write("jobs/api.yaml", JOB.formatted("api"));
+            var r = load(write("butler.yaml", "include: jobs/api.yaml\n"));
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertNotNull(r.config().jobs().get("api"));
+        }
+
+        @Test
+        @DisplayName("an absolute entry is read as it stands")
+        void absoluteEntry() throws IOException {
+            Path api = write("elsewhere/api.yaml", JOB.formatted("api"));
+            var r = load(write("butler.yaml", "include: " + api + "\n"));
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertNotNull(r.config().jobs().get("api"));
+        }
+
+        @Test
+        @DisplayName("an included file may include, and each lands where it was named")
+        void includesNest() throws IOException {
+            write("shared/vars.yaml", """
+                    vars:
+                      app: demo
+                    """);
+            write("jobs/api.yaml", """
+                    include: ../shared/vars.yaml
+                    
+                    jobs:
+                      api:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: "${vars.app}"}]
+                    """);
+            write("jobs/backup.yaml", JOB.formatted("backup"));
+            Path root = write("butler.yaml", """
+                    include:
+                      - jobs/api.yaml
+                      - jobs/backup.yaml
+                    """);
+            var r = load(root);
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertEquals("demo", r.config().vars().get("app"));
+            // Depth first: a file is read straight after the one that named it.
+            assertEquals(List.of(root.toString(),
+                            dir.resolve("jobs/api.yaml").toString(),
+                            dir.resolve("shared/vars.yaml").toString(),
+                            dir.resolve("jobs/backup.yaml").toString()),
+                    r.files());
+        }
+
+        @Test
+        @DisplayName("a file two others include is read once, not every job in it twice")
+        void readOnce() throws IOException {
+            write("shared/vars.yaml", """
+                    vars:
+                      app: demo
+                    """);
+            write("jobs/api.yaml", "include: ../shared/vars.yaml\n" + JOB.formatted("api"));
+            write("jobs/backup.yaml", "include: ../shared/vars.yaml\n" + JOB.formatted("backup"));
+            Path root = write("butler.yaml", """
+                    include:
+                      - jobs/api.yaml
+                      - jobs/backup.yaml
+                    """);
+            var r = load(root);
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertEquals(List.of(root.toString(),
+                            dir.resolve("jobs/api.yaml").toString(),
+                            dir.resolve("shared/vars.yaml").toString(),
+                            dir.resolve("jobs/backup.yaml").toString()),
+                    r.files());
+        }
+
+        @Test
+        @DisplayName("a cycle ends rather than recurring, since the file is already read")
+        void cyclesTerminate() throws IOException {
+            write("b.yaml", "include: a.yaml\n" + JOB.formatted("api"));
+            Path root = write("a.yaml", "include: b.yaml\n");
+            var r = load(root);
+            assertFalse(r.diagnostics().hasErrors(), r.diagnostics().render("x"));
+            assertEquals(List.of(root.toString(), dir.resolve("b.yaml").toString()), r.files());
+        }
+
+        @Test
+        @DisplayName("an entry naming nothing is an error at that entry")
+        void missingFileIsReportedAtTheEntry() throws IOException {
+            write("jobs/api.yaml", JOB.formatted("api"));
+            Path root = write("butler.yaml", """
+                    include:
+                      - jobs/api.yaml
+                      - jobs/gone.yaml
+                    """);
+            Diagnostic d = DiagnosticsTest.only(load(root).diagnostics());
+            assertEquals(root.toString(), d.file());
+            assertEquals("/include/1", d.path());
+            assertEquals(3, d.loc().line());
+            assertTrue(d.message().contains("no such config file"), d.message());
+        }
+
+        @Test
+        @DisplayName("a list of one still points at the entry, not at the key")
+        void aListOfOneIsStillIndexed() throws IOException {
+            Path root = write("butler.yaml", """
+                    include:
+                      - jobs/gone.yaml
+                    """ + JOB.formatted("api"));
+            Diagnostic d = DiagnosticsTest.only(load(root).diagnostics());
+            assertEquals("/include/0", d.path());
+            assertEquals(2, d.loc().line());
+        }
+
+        @Test
+        @DisplayName("a near miss is suggested, since the walk knows the key even though it "
+                + "does not read it")
+        void includeIsSuggested() throws IOException {
+            Path root = write("butler.yaml", "inclde: jobs/api.yaml\n" + JOB.formatted("api"));
+            Diagnostic d = DiagnosticsTest.only(load(root).diagnostics());
+            assertTrue(d.message().contains("did you mean \"include\"?"), d.message());
+        }
+
+        @Test
+        @DisplayName("a directory is not a config file")
+        void directoryIsRefused() throws IOException {
+            write("jobs/api.yaml", JOB.formatted("api"));
+            Path root = write("butler.yaml", "include: jobs\n" + JOB.formatted("other"));
+            Diagnostic d = DiagnosticsTest.only(load(root).diagnostics());
+            assertEquals("/include", d.path());
+            assertTrue(d.message().contains("it is a directory"), d.message());
+        }
+
+        @Test
+        @DisplayName("a problem inside an included file names that file, with its own line")
+        void errorsNameTheIncludedFile() throws IOException {
+            Path api = write("jobs/api.yaml", """
+                    jobs:
+                      api:
+                        on: [{uses: manual}]
+                        tiemout: 30s
+                        steps: [{uses: control.log, message: hi}]
+                    """);
+            Path root = write("butler.yaml", "include: jobs/api.yaml\n");
+            Diagnostic d = DiagnosticsTest.only(load(root).diagnostics());
+            assertEquals(api.toString(), d.file());
+            assertEquals(4, d.loc().line());
+            assertTrue(d.message().contains("unknown key \"tiemout\""), d.message());
+        }
+
+        @Test
+        @DisplayName("the same job in two included files is still an error")
+        void includedFilesStillMergeAsOne() throws IOException {
+            write("jobs/api.yaml", JOB.formatted("api"));
+            write("jobs/again.yaml", JOB.formatted("api"));
+            Path root = write("butler.yaml", """
+                    include:
+                      - jobs/api.yaml
+                      - jobs/again.yaml
+                    """);
+            Diagnostic d = DiagnosticsTest.only(load(root).diagnostics());
+            assertEquals(dir.resolve("jobs/again.yaml").toString(), d.file());
+            assertTrue(d.message().contains("job \"api\" is already defined in"), d.message());
+        }
+
+        @Test
+        @DisplayName("settings: still belongs to one file, however the files arrived")
+        void settingsStillBelongToOneFile() throws IOException {
+            write("one.yaml", "settings: {max_concurrent_runs: 2}\n" + JOB.formatted("api"));
+            write("two.yaml", "settings: {max_concurrent_runs: 3}\n");
+            Path root = write("butler.yaml", """
+                    include:
+                      - one.yaml
+                      - two.yaml
+                    """);
+            Diagnostic d = DiagnosticsTest.only(load(root).diagnostics());
+            assertTrue(d.message().contains("settings: is already set in"), d.message());
+        }
+
+        @Test
+        @DisplayName("a config read from a string has no directory to resolve against")
+        void refusedWithoutAFile() {
+            Diagnostic d = DiagnosticsTest.only(
+                    loadAndValidate("include: other.yaml\n" + JOB.formatted("api")).diagnostics());
+            assertEquals("/include", d.path());
+            assertTrue(d.message().contains("nothing to resolve against"), d.message());
         }
     }
 }

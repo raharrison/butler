@@ -41,6 +41,15 @@ public final class Cursor {
         return map.containsKey(key);
     }
 
+    /**
+     * Marks a key as read by something other than this walk, so it is neither reported as unknown
+     * nor missing from the did-you-mean candidates. {@code include:} is the one such key: it is
+     * resolved before the document it appears in is walked.
+     */
+    public void skip(String key) {
+        asked.add(key);
+    }
+
     private Object raw(String key) {
         asked.add(key);
         return map.get(key);

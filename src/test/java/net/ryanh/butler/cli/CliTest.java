@@ -143,6 +143,77 @@ class CliTest {
     }
 
     @Nested
+    @DisplayName("include:, so one --config names them all")
+    class IncludedConfigFiles {
+
+        private Path jobs(String name, String job) throws IOException {
+            Files.createDirectories(dir.resolve("jobs"));
+            return write("jobs/" + name, """
+                    jobs:
+                      %s:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log, message: hi}]
+                    """.formatted(job));
+        }
+
+        @Test
+        @DisplayName("every file read is reported, not only the one named")
+        void includedFilesAreValidated() throws IOException {
+            Path api = jobs("api.yaml", "api");
+            Path root = write("butler.yaml", """
+                    vars:
+                      app: demo
+                    
+                    include:
+                      - jobs/api.yaml
+                    """);
+            int code = Main.run("validate", "-c", root.toString());
+            assertEquals(0, code, stderr());
+            assertTrue(stdout().contains(root + ": ok"), stdout());
+            assertTrue(stdout().contains(api + ": ok"), stdout());
+        }
+
+        @Test
+        @DisplayName("naming an included file on the command line too is not every job twice")
+        void namingBothIsNotADuplicate() throws IOException {
+            Path api = jobs("api.yaml", "api");
+            Path root = write("butler.yaml", "include: jobs/api.yaml\n");
+            int code = Main.run("validate", "-c", root.toString(), "-c", api.toString());
+            assertEquals(0, code, stderr());
+        }
+
+        @Test
+        @DisplayName("an error inside an included file names that file")
+        void errorsNameTheIncludedFile() throws IOException {
+            Files.createDirectories(dir.resolve("jobs"));
+            Path api = write("jobs/api.yaml", """
+                    jobs:
+                      api:
+                        on: [{uses: manual}]
+                        tiemout: 30s
+                        steps: [{uses: control.log, message: hi}]
+                    """);
+            Path root = write("butler.yaml", "include: jobs/api.yaml\n");
+            int code = Main.run("validate", "-c", root.toString());
+            assertEquals(1, code);
+            assertTrue(stderr().startsWith(api + ":4:"), stderr());
+        }
+
+        @Test
+        @DisplayName("an entry naming nothing is located in the file that named it")
+        void aMissingEntryIsReportedWhereItIsWritten() throws IOException {
+            Path root = write("butler.yaml", """
+                    include:
+                      - jobs/gone.yaml
+                    """ + MINIMAL);
+            int code = Main.run("validate", "-c", root.toString());
+            assertEquals(1, code);
+            assertTrue(stderr().startsWith(root + ":2:"), stderr());
+            assertTrue(stderr().contains("no such config file"), stderr());
+        }
+    }
+
+    @Nested
     @DisplayName("validate")
     class Validate {
 

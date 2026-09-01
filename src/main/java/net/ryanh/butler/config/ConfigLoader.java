@@ -8,7 +8,6 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
@@ -28,9 +27,11 @@ public final class ConfigLoader {
     }
 
     /**
-     * The outcome of loading: whatever could be built, plus everything wrong with it.
+     * The outcome of loading: whatever could be built, everything wrong with it, and the files it
+     * came from in the order they were read, which {@code include:} means the caller does not
+     * otherwise know.
      */
-    public record Result(ButlerConfig config, Diagnostics diagnostics) {
+    public record Result(ButlerConfig config, Diagnostics diagnostics, List<String> files) {
         public boolean ok() {
             return !diagnostics.hasErrors();
         }
@@ -42,16 +43,23 @@ public final class ConfigLoader {
     public record Source(String file, String yaml) {
     }
 
+    /**
+     * One config file once it has been read: where its problems are located, and its tree.
+     *
+     * <p>{@code path} is null for a config that came from a string, which has no directory for an
+     * {@code include:} to resolve against. {@code root} is null for one that was empty or would
+     * not parse, whose problem is already reported.
+     */
+    record Document(String file, Path path, SourceMap map, Map<String, Object> root) {
+    }
+
     public static Result load(Path file) throws IOException {
         return load(List.of(file));
     }
 
     public static Result load(List<Path> files) throws IOException {
-        List<Source> sources = new ArrayList<>(files.size());
-        for (Path file : files) {
-            sources.add(new Source(file.toString(), Files.readString(file)));
-        }
-        return parse(sources);
+        Diagnostics diags = new Diagnostics();
+        return build(Includes.expand(files, diags), diags);
     }
 
     public static Result parse(String yaml) {
@@ -60,29 +68,40 @@ public final class ConfigLoader {
 
     public static Result parse(List<Source> sources) {
         Diagnostics diags = new Diagnostics();
-        Merge merge = new Merge(diags);
+        List<Document> documents = new ArrayList<>(sources.size());
         for (Source source : sources) {
-            SourceMap sourceMap = SourceMap.of(source.yaml());
-            diags.source(source.file(), sourceMap);
-            read(source, sourceMap, diags, merge);
+            documents.add(open(source, null, diags));
         }
-        // Validation runs on the merged document, not on any one file.
-        diags.merged();
-        return new Result(merge.build(), diags);
+        return build(documents, diags);
     }
 
     /**
-     * Reads one file into the merge. An unreadable one contributes nothing and does not stop
-     * the rest.
+     * Walks documents that have already been read into one config. Reading and walking are
+     * separate passes because an {@code include:} has to be resolved before the file it names can
+     * be read; {@link Includes} is that first pass.
      */
-    private static void read(Source source, SourceMap sourceMap, Diagnostics diags, Merge merge) {
-        String yaml = source.yaml();
-        rejectAliases(sourceMap, diags);
+    private static Result build(List<Document> documents, Diagnostics diags) {
+        Merge merge = new Merge(diags);
+        for (Document doc : documents) {
+            diags.source(doc.file(), doc.map());
+            walk(doc, diags, merge);
+        }
+        // Validation runs on the merged document, not on any one file.
+        diags.merged();
+        return new Result(merge.build(), diags, documents.stream().map(Document::file).toList());
+    }
 
-        if (isEffectivelyEmpty(yaml)) {
+    /**
+     * Reads one source into a document. A file that is empty or will not parse is reported here
+     * and carries no tree.
+     */
+    static Document open(Source source, Path path, Diagnostics diags) {
+        SourceMap sourceMap = SourceMap.of(source.yaml());
+        diags.source(source.file(), sourceMap);
+
+        if (isEffectivelyEmpty(source.yaml())) {
             diags.error("", "the config file is empty");
-            merge.unreadable();
-            return;
+            return new Document(source.file(), path, sourceMap, null);
         }
 
         Map<String, Object> root;
@@ -93,20 +112,35 @@ public final class ConfigLoader {
             YAMLMapper mapper = YAMLMapper.builder()
                     .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
                     .build();
-            root = mapper.readValue(yaml, new TypeReference<LinkedHashMap<String, Object>>() {
-            });
+            root = mapper.readValue(source.yaml(),
+                    new TypeReference<LinkedHashMap<String, Object>>() {
+                    });
         } catch (RuntimeException e) {
             reportParseFailure(e, diags);
-            merge.unreadable();
-            return;
+            return new Document(source.file(), path, sourceMap, null);
         }
         if (root == null) {
             diags.error("", "the config file is empty");
+            return new Document(source.file(), path, sourceMap, null);
+        }
+        return new Document(source.file(), path, sourceMap, root);
+    }
+
+    /**
+     * One document's contribution to the merge. An unreadable one contributes nothing and does not
+     * stop the rest.
+     */
+    private static void walk(Document doc, Diagnostics diags, Merge merge) {
+        rejectAliases(doc.map(), diags);
+        if (doc.root() == null) {
             merge.unreadable();
             return;
         }
-
-        merge.add(document(new Cursor(root, "", diags)), source.file());
+        if (doc.path() == null && doc.root().containsKey("include")) {
+            diags.error("/include", "include: has nothing to resolve against, "
+                    + "because this config was not read from a file");
+        }
+        merge.add(document(new Cursor(doc.root(), "", diags)), doc.file());
     }
 
     /**
@@ -199,6 +233,9 @@ public final class ConfigLoader {
             c.diagnostics().error("/version",
                     "unsupported config version " + version + " (this build understands version 1)");
         }
+
+        // Read by Includes before this walk, so it is accounted for rather than unknown.
+        c.skip("include");
 
         // Asked for even when absent: asked-for keys are the "did you mean" candidates.
         boolean hasSettings = c.has("settings");

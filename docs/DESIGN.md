@@ -312,14 +312,20 @@ every step produces. Four things about them are design decisions rather than ref
 
 ### 3.4 One config, several files
 
-`--config` may be repeated. Each file is a whole document; they are read in order and merged
-before validation, so cross-references resolve however the files are split. Collections
-accumulate and policy belongs to a single file
-([the split](CONFIGURATION.md#several-files)).
+A config names the other files it is made of with `include:`, and `--config` may also be repeated.
+Each file is a whole document; they are read in order and merged before validation, so
+cross-references resolve however the files are split. Collections accumulate and policy belongs to
+a single file ([the split](CONFIGURATION.md#several-files)).
+
+The file set belongs to the config rather than to the invocation: a list that lives only on the
+command line has to be repeated by the unit file, by CI and by anyone validating off-host, and
+those drift. Expansion happens before the merge and cannot override anything, so `include:` spells
+the file list rather than layering environments over it.
 
 Later files add rather than override: overriding would need a precedence order in the reader's
 head, and the point is one job to a file, not environment layering. There is still one config,
-one state directory and one run history; only the diagnostics know how many files there were.
+one state directory and one run history; only the diagnostics and `butler validate` know how many
+files there were.
 
 ---
 
