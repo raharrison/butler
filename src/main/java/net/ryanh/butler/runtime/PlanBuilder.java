@@ -3,6 +3,7 @@ package net.ryanh.butler.runtime;
 import net.ryanh.butler.config.Diagnostics;
 import net.ryanh.butler.config.model.Enums;
 import net.ryanh.butler.config.model.JobDef;
+import net.ryanh.butler.config.model.NotifyDef;
 import net.ryanh.butler.config.model.StepDef;
 import net.ryanh.butler.expr.ExprException;
 import net.ryanh.butler.spi.Event;
@@ -46,10 +47,10 @@ public final class PlanBuilder {
 
         List<Plan.Hook> hooks = wouldRun ? hooks(job) : List.of();
         Map<String, Object> persist = new LinkedHashMap<>();
-        Plan.Notification notify = null;
+        List<Plan.Notification> notify = List.of();
         if (wouldRun) {
             job.persist().forEach((k, v) -> persist.put(k, ctx.resolveValue(v)));
-            notify = notification(job, ctx, persisted);
+            notify = notifications(job, ctx, persisted);
         }
 
         return new Plan(job.name(), event.trigger(), event.facts(), discover, when, steps,
@@ -91,20 +92,21 @@ public final class PlanBuilder {
     }
 
     /**
-     * The message a successful run would send, judged the same way {@code JobRunner} judges it. A
-     * plan promising a notification the run would not send is the divergence dry run exists to
+     * The messages a successful run would send, judged the same way {@code JobRunner} judges them.
+     * A plan promising a notification the run would not send is the divergence dry run exists to
      * eliminate, which includes knowing that a success after a failure is a recovery.
      */
-    private static Plan.Notification notification(JobDef job, Context ctx,
-                                                  StateStore.JobState persisted) {
-        if (job.notifyPolicy() == null) {
-            return null;
+    private static List<Plan.Notification> notifications(JobDef job, Context ctx,
+                                                         StateStore.JobState persisted) {
+        Enums.Outcome outcome = JobRunner.outcomeOf(Run.Status.SUCCESS, persisted.status());
+        List<Plan.Notification> out = new ArrayList<>();
+        for (NotifyDef rule : job.notifyPolicy()) {
+            String message = rule.templateFor(outcome);
+            if (message != null) {
+                out.add(new Plan.Notification(rule.to(), ctx.resolve(message)));
+            }
         }
-        Enums.Outcome outcome =
-                JobRunner.outcomeOf(Run.Status.SUCCESS, persisted.status());
-        String message = job.notifyPolicy().templateFor(outcome);
-        return message == null
-                ? null : new Plan.Notification(job.notifyPolicy().to(), ctx.resolve(message));
+        return List.copyOf(out);
     }
 
     private static List<Plan.Entry> entries(String section, List<StepDef> defs, JobDef job,

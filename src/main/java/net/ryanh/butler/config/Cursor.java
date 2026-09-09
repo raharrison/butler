@@ -241,7 +241,6 @@ public final class Cursor {
     /**
      * A list of mappings, each as its own cursor with an indexed path.
      */
-    @SuppressWarnings("unchecked")
     public List<Cursor> objects(String key) {
         Object v = raw(key);
         if (v == null) {
@@ -251,10 +250,34 @@ public final class Cursor {
             diags.error(child(key), "expected a list, found " + kindOf(v));
             return List.of();
         }
+        return items(child(key), list);
+    }
+
+    /**
+     * One mapping or a list of them, read the same way, as {@code notify:} is written either way.
+     */
+    @SuppressWarnings("unchecked")
+    public List<Cursor> objectOrObjects(String key) {
+        Object v = raw(key);
+        if (v == null) {
+            return List.of();
+        }
+        if (v instanceof Map) {
+            return List.of(new Cursor((Map<String, Object>) v, child(key), diags));
+        }
+        if (v instanceof List<?> list) {
+            return items(child(key), list);
+        }
+        diags.error(child(key), "expected a mapping or a list, found " + kindOf(v));
+        return List.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Cursor> items(String path, List<?> list) {
         List<Cursor> out = new ArrayList<>();
         for (int i = 0; i < list.size(); i++) {
             Object item = list.get(i);
-            String itemPath = child(key) + "/" + i;
+            String itemPath = path + "/" + i;
             if (item instanceof Map) {
                 out.add(new Cursor((Map<String, Object>) item, itemPath, diags));
             } else {

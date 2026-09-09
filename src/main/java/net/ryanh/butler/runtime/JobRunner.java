@@ -1,9 +1,6 @@
 package net.ryanh.butler.runtime;
 
-import net.ryanh.butler.config.model.Enums;
-import net.ryanh.butler.config.model.JobDef;
-import net.ryanh.butler.config.model.RetryDef;
-import net.ryanh.butler.config.model.StepDef;
+import net.ryanh.butler.config.model.*;
 import net.ryanh.butler.expr.ExprException;
 import net.ryanh.butler.spi.Event;
 import net.ryanh.butler.spi.StepResult;
@@ -168,12 +165,12 @@ public final class JobRunner {
                 ? evaluate(job.persist(), ctx)
                 : Map.of();
         record(job, event, ctx, outcome.status(), persist, persisted);
-        Plan.Notification notification =
+        List<Plan.Notification> notifications =
                 notify(job, ctx, outcome.status(), persisted.status());
 
         log.info("{} in {}", outcome.status(), Durations.format(took));
         Run run = new Run(id, job.name(), event.trigger(), event.facts(), outcome.status(), started,
-                took, discovered, decision, List.copyOf(steps), persist, notification,
+                took, discovered, decision, List.copyOf(steps), persist, notifications,
                 outcome.failedStep(), outcome.message());
         if (outcome.status() != Run.Status.CANCELLED) {
             env.runs().record(run, env.config().retentionFor(job));
@@ -424,30 +421,34 @@ public final class JobRunner {
 
     /**
      * A channel that refuses the message is logged and no more: the run has ended, and failing it
-     * now would report a deployment that worked as one that did not. One that refuses does not
-     * stop the others.
+     * now would report a deployment that worked as one that did not. One that refuses stops
+     * neither the rest of its rule nor the rules after it.
      */
-    private Plan.Notification notify(JobDef job, Context ctx, Run.Status status,
-                                     Run.Status previous) {
-        if (job.notifyPolicy() == null) {
-            return null;
-        }
+    private List<Plan.Notification> notify(JobDef job, Context ctx, Run.Status status,
+                                           Run.Status previous) {
         Enums.Outcome outcome = outcomeOf(status, previous);
-        String template = outcome == null ? null : job.notifyPolicy().templateFor(outcome);
-        if (template == null) {
-            return null;
+        if (outcome == null) {
+            return List.of();
         }
-        List<String> to = job.notifyPolicy().to();
-        String message = ctx.resolve(template);
-        log.info("notify {}: {}", String.join(", ", to), message);
-        for (String channel : to) {
-            try {
-                ctx.notifications().send(channel, message);
-            } catch (Exception e) {
-                log.error("could not notify {}: {}", channel, e.toString());
+        List<Plan.Notification> sent = new ArrayList<>();
+        for (NotifyDef rule : job.notifyPolicy()) {
+            String template = rule.templateFor(outcome);
+            if (template == null) {
+                continue;
             }
+            List<String> to = rule.to();
+            String message = ctx.resolve(template);
+            log.info("notify {}: {}", String.join(", ", to), message);
+            for (String channel : to) {
+                try {
+                    ctx.notifications().send(channel, message);
+                } catch (Exception e) {
+                    log.error("could not notify {}: {}", channel, e.toString());
+                }
+            }
+            sent.add(new Plan.Notification(to, message));
         }
-        return new Plan.Notification(to, message);
+        return List.copyOf(sent);
     }
 
     /**

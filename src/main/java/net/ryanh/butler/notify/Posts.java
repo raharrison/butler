@@ -6,7 +6,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * How every notifier delivers: POST, and throw if the far end says no.
@@ -52,10 +56,10 @@ final class Posts {
     }
 
     /**
-     * A flat JSON object, leaving out the fields the config did not set. Hand-written because the
-     * bodies here are at most four strings.
+     * A JSON object, leaving out the fields the config did not set. Hand-written because the
+     * bodies here are a handful of values.
      */
-    static String json(Map<String, String> fields) {
+    static String json(Map<String, ?> fields) {
         StringBuilder sb = new StringBuilder("{");
         fields.forEach((key, value) -> {
             if (value == null) {
@@ -64,9 +68,29 @@ final class Posts {
             if (sb.length() > 1) {
                 sb.append(", ");
             }
-            sb.append(quote(key)).append(": ").append(quote(value));
+            sb.append(quote(key)).append(": ").append(value(value));
         });
         return sb.append('}').toString();
+    }
+
+    /**
+     * One JSON value: the scalars, a list as an array and a map as a nested object.
+     */
+    private static String value(Object v) {
+        return switch (v) {
+            case Number n -> n.toString();
+            case Boolean b -> b.toString();
+            case Map<?, ?> m -> json(withStringKeys(m));
+            case List<?> items -> items.stream().filter(Objects::nonNull)
+                    .map(Posts::value).collect(Collectors.joining(", ", "[", "]"));
+            default -> quote(String.valueOf(v));
+        };
+    }
+
+    private static Map<String, Object> withStringKeys(Map<?, ?> m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        m.forEach((k, v) -> out.put(String.valueOf(k), v));
+        return out;
     }
 
     /**

@@ -24,7 +24,7 @@ class RunRendererTest {
                 List.of(), null,
                 List.of(new Run.Step("step", "Run it", "shell.exec", StepResult.Status.OK,
                         Duration.ofMillis(80), 1, null, outputs)),
-                Map.of(), null, null, null);
+                Map.of(), List.of(), null, null);
     }
 
     @Test

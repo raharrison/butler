@@ -63,7 +63,7 @@ class RunRecorderTest {
                         StepResult.Status.OK, Duration.ofMillis(80), 1, null,
                         Map.of("path", "/srv/apps/api/releases/1.2.4/api.jar"))),
                 Map.of("deployed_version", "1.2.4"),
-                new Plan.Notification(List.of("ops"), "api 1.2.4 deployed"), null, null);
+                List.of(new Plan.Notification(List.of("ops"), "api 1.2.4 deployed")), null, null);
     }
 
     private List<Path> records() throws IOException {
@@ -287,7 +287,7 @@ class RunRecorderTest {
                                     Map.of("stdout", "copying...\ndisk full\n")),
                             new Run.Step("on_failure", "Roll back", "fs.symlink",
                                     StepResult.Status.OK, Duration.ZERO, 1, null, Map.of())),
-                    Map.of(), null, "Stage", "disk full");
+                    Map.of(), List.of(), "Stage", "disk full");
             RunRecorder recorder = recorder();
             recorder.record(run, KEEP_EVERYTHING);
 
@@ -315,6 +315,21 @@ class RunRecorderTest {
 
             assertEquals("web", history.get(1).job());
             assertEquals(Run.Status.FAILED, history.get(1).status());
+        }
+
+        @Test
+        @DisplayName("every rule's message round-trips, in the order the policy sent them")
+        void severalNotificationsRoundTrip() {
+            Run run = new Run("20260809T031407-a1b2", "api", "manual", Map.of(),
+                    Run.Status.SUCCESS, Instant.parse("2026-08-09T03:14:07Z"),
+                    Duration.ofSeconds(12), List.of(), null, List.of(), Map.of(),
+                    List.of(new Plan.Notification(List.of("ops", "oncall"), "api 1.2.4 deployed"),
+                            new Plan.Notification(List.of("status"), "api is now 1.2.4")),
+                    null, null);
+            RunRecorder recorder = recorder();
+            recorder.record(run, KEEP_EVERYTHING);
+
+            assertEquals(run, recorder.read(run.id()));
         }
 
         @Test

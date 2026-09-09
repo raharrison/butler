@@ -307,7 +307,7 @@ The records themselves are plain JSON, for anything those two do not answer:
     "outputs" : { "stdout" : "migrating to 1.2.4...\ndone\n", "stderr" : "", "exit_code" : 0 }
   } ],
   "persisted" : { "deployed_version" : "1.2.4" },
-  "notified" : null
+  "notified" : [ { "to" : [ "ops" ], "message" : ":rocket: api 1.2.4 deployed in 41s" } ]
 }
 ```
 
@@ -319,7 +319,7 @@ The records themselves are plain JSON, for anything those two do not answer:
 | `when`      | The decision with **both sides resolved**, so it can be checked rather than taken on trust.                   |
 | `steps`     | Every step, with its `section` (`step`, `on_failure`, `on_success`, `always`), status, duration and attempts. |
 | `persisted` | What was written to `state.*`. Empty unless the run succeeded.                                                |
-| `notified`  | The channel and the rendered message, or null.                                                                |
+| `notified`  | Each notify rule's channels and rendered message. Empty if nothing was sent.                                  |
 
 **`steps[].outputs`** is the step's own result fields - `stdout`/`stderr`/`exit_code` for a
 process, `body`/`json` for an HTTP step, `path`/`bytes` for a file step - kept **in full**, success

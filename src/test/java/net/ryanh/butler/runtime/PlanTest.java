@@ -170,7 +170,7 @@ class PlanTest {
                           success: ":rocket: this must never be sent"
                     """, "j", StepRegistry.discover(), Map.of());
 
-            assertNull(built.plan().notification(),
+            assertEquals(List.of(), built.plan().notifications(),
                     "the policy fires on failure only, so a successful run notifies nobody");
             assertFalse(built.rendered().contains("notify"), built.rendered());
         }
@@ -216,7 +216,7 @@ class PlanTest {
                           recovered: "back after ${run.previous_status}"
                     """, "j", StepRegistry.discover(), Map.of());
 
-            assertEquals("back after failed", built.plan().notification().message());
+            assertEquals("back after failed", built.plan().notifications().getFirst().message());
         }
 
         @Test

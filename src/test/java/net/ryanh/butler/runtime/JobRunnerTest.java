@@ -709,7 +709,7 @@ class JobRunnerTest {
                 Run run = run(config(channels, BOTH_OUTCOMES, "control.log"), "j");
 
                 assertEquals(Run.Status.SUCCESS, run.status(), run.message());
-                assertEquals(List.of("ops", "oncall"), run.notification().to());
+                assertEquals(List.of("ops", "oncall"), run.notifications().getFirst().to());
                 assertEquals(List.of("/ops", "/oncall"), paths(channels));
             }
         }
@@ -724,6 +724,59 @@ class JobRunnerTest {
                 assertEquals(Run.Status.SUCCESS, run.status(), run.message());
                 assertEquals(List.of("/ops", "/oncall"), paths(channels),
                         "the refusal is logged, and the next channel is still tried");
+            }
+        }
+
+        private static final String TWO_RULES = """
+                    notify:
+                      - to: ops
+                        on: [ success ]
+                        success: "deployed"
+                      - to: oncall
+                        on: [ failure ]
+                        failure: "broke"
+                """;
+
+        @Test
+        @DisplayName("each rule sends its own message to its own channels")
+        void eachRuleSendsItsOwnMessage() {
+            try (StubServer channels = StubServer.serving(200, "")) {
+                Run success = run(config(channels, TWO_RULES, "control.log"), "j");
+
+                assertEquals(Run.Status.SUCCESS, success.status(), success.message());
+                assertEquals(List.of("/ops"), paths(channels), "oncall hears about failures only");
+                assertEquals("deployed", success.notifications().getFirst().message());
+
+                Run failure = run(config(channels, TWO_RULES, "control.fail"), "j");
+
+                assertEquals(Run.Status.FAILED, failure.status());
+                assertEquals(List.of("/ops", "/oncall"), paths(channels));
+                assertEquals(List.of("oncall"), failure.notifications().getFirst().to());
+                assertTrue(bodyTo(channels, "/oncall").contains("broke"));
+            }
+        }
+
+        private static final String TWO_RULES_ONE_OUTCOME = """
+                    notify:
+                      - to: ops
+                        on: [ success ]
+                        success: "deployed"
+                      - to: oncall
+                        on: [ success ]
+                        success: "api is up again, in case you were watching"
+                """;
+
+        @Test
+        @DisplayName("a rule whose channel refuses does not stop the rule after it")
+        void oneRefusingRuleDoesNotStopTheNext() {
+            try (StubServer channels = StubServer.serving(request ->
+                    new StubServer.Answer(request.path().equals("/ops") ? 500 : 200, ""))) {
+                Run run = run(config(channels, TWO_RULES_ONE_OUTCOME, "control.log"), "j");
+
+                assertEquals(Run.Status.SUCCESS, run.status(), run.message());
+                assertEquals(List.of("/ops", "/oncall"), paths(channels));
+                assertEquals(2, run.notifications().size(), "both rules fired on one outcome");
+                assertTrue(bodyTo(channels, "/oncall").contains("up again"));
             }
         }
 
@@ -746,7 +799,7 @@ class JobRunnerTest {
                 Run second = run(config(channels, WITH_RECOVERY, "control.log"), "j");
 
                 assertEquals(Run.Status.SUCCESS, second.status(), second.message());
-                assertEquals("back after failed", second.notification().message());
+                assertEquals("back after failed", second.notifications().getFirst().message());
             }
         }
 
@@ -755,7 +808,7 @@ class JobRunnerTest {
         void aFirstRunIsNotARecovery() {
             try (StubServer channels = StubServer.serving(200, "")) {
                 Run run = run(config(channels, WITH_RECOVERY, "control.log"), "j");
-                assertEquals("deployed", run.notification().message());
+                assertEquals("deployed", run.notifications().getFirst().message());
             }
         }
 
@@ -765,7 +818,7 @@ class JobRunnerTest {
             try (StubServer channels = StubServer.serving(200, "")) {
                 run(config(channels, WITH_RECOVERY, "control.log"), "j");
                 Run second = run(config(channels, WITH_RECOVERY, "control.log"), "j");
-                assertEquals("deployed", second.notification().message());
+                assertEquals("deployed", second.notifications().getFirst().message());
             }
         }
 
@@ -777,7 +830,7 @@ class JobRunnerTest {
                 run(config(channels, BOTH_OUTCOMES, "control.fail"), "j");
                 Run second = run(config(channels, BOTH_OUTCOMES, "control.log"), "j");
 
-                assertEquals("deployed", second.notification().message());
+                assertEquals("deployed", second.notifications().getFirst().message());
                 assertEquals(List.of("/ops", "/oncall", "/ops", "/oncall"), paths(channels));
             }
         }
@@ -793,7 +846,7 @@ class JobRunnerTest {
                         "control.log", "    when: false\n"), "j").status());
 
                 Run third = run(config(channels, WITH_RECOVERY, "control.log"), "j");
-                assertEquals("back after failed", third.notification().message());
+                assertEquals("back after failed", third.notifications().getFirst().message());
             }
         }
 

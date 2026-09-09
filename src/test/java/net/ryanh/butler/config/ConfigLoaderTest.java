@@ -189,13 +189,49 @@ class ConfigLoaderTest {
 
         @Test
         void notifyPolicy() throws IOException {
-            var n = load().config().jobs().get("api").notifyPolicy();
-            assertEquals(List.of("ops", "oncall"), n.to());
-            assertEquals(List.of(Enums.Outcome.SUCCESS, Enums.Outcome.FAILURE,
-                    Enums.Outcome.RECOVERED), n.on());
-            assertTrue(n.messages().get("success").contains("deployed"));
-            assertTrue(n.messages().get("recovered").contains("is back"));
+            var policy = load().config().jobs().get("api").notifyPolicy();
+            assertEquals(2, policy.size());
+
+            var announce = policy.getFirst();
+            assertEquals(List.of("ops"), announce.to());
+            assertEquals(List.of(Enums.Outcome.SUCCESS, Enums.Outcome.RECOVERED), announce.on());
+            assertTrue(announce.messages().get("success").contains("deployed"));
+            assertTrue(announce.messages().get("recovered").contains("is back"));
+
+            var page = policy.getLast();
+            assertEquals(List.of("ops", "oncall"), page.to());
+            assertEquals(List.of(Enums.Outcome.FAILURE), page.on());
+            assertTrue(page.messages().get("failure").contains("rollback"));
         }
+    }
+
+    @Test
+    @DisplayName("a list of notify rules keeps them in source order, each with its own path")
+    void notifyRulesLoadAsAList() {
+        var policy = loadAndValidate("""
+                notifiers:
+                  ops: {uses: notify.webhook, url: "http://localhost/x"}
+                  pager: {uses: notify.webhook, url: "http://localhost/y"}
+                jobs:
+                  j:
+                    on: [{uses: manual}]
+                    steps: [{uses: control.log}]
+                    notify:
+                      - to: ops
+                        on: [success]
+                        success: deployed
+                      - to: [ops, pager]
+                        on: [failure]
+                        failure: it broke
+                """).config().jobs().get("j").notifyPolicy();
+
+        assertEquals(2, policy.size());
+        assertEquals(List.of("ops"), policy.getFirst().to());
+        assertEquals(List.of(Enums.Outcome.SUCCESS), policy.getFirst().on());
+        assertEquals("deployed", policy.getFirst().messages().get("success"));
+        assertEquals(List.of("ops", "pager"), policy.getLast().to());
+        assertEquals("it broke", policy.getLast().messages().get("failure"));
+        assertEquals("/jobs/j/notify/1", policy.getLast().path());
     }
 
     @Nested

@@ -929,6 +929,62 @@ class DiagnosticsTest {
         }
 
         @Test
+        @DisplayName("an unknown channel points at the rule it is in, not at the job")
+        void unknownChannelInASecondRuleIsLocated() {
+            var d = only("""
+                    notifiers:
+                      ops:
+                        uses: notify.slack
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                        notify:
+                          - to: ops
+                            on: [success]
+                            success: deployed
+                          - to: opps
+                            on: [failure]
+                            failure: it broke
+                    """);
+            assertAt(d, 12, "no notifier named \"opps\"");
+            assertTrue(d.message().contains("ops"), d.message());
+        }
+
+        @Test
+        @DisplayName("a message for an outcome the rule does not fire on is never sent")
+        void aMessageOutsideOnIsWarnedAbout() {
+            var d = only("""
+                    notifiers:
+                      ops: {uses: notify.webhook, url: "http://localhost/x"}
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                        notify:
+                          to: ops
+                          on: [failure]
+                          failure: it broke
+                          recovered: "it is back"
+                    """);
+            assertAt(d, 11, "\"recovered\" is not listed in \"on\"");
+            assertEquals(Diagnostic.Severity.WARNING, d.severity());
+        }
+
+        @Test
+        @DisplayName("notify: is a mapping or a list of them, and says so")
+        void notifyMustBeAMappingOrAList() {
+            var d = only("""
+                    jobs:
+                      j:
+                        on: [{uses: manual}]
+                        steps: [{uses: control.log}]
+                        notify: ops
+                    """);
+            assertAt(d, 5, "expected a mapping or a list, found text");
+        }
+
+        @Test
         @DisplayName("an empty to: names no channel, so the policy could never send")
         void anEmptyToIsRejected() {
             var d = only("""
@@ -997,9 +1053,10 @@ class DiagnosticsTest {
                             register: rollback
                         notify:
                           to: ops
+                          on: [ success, failure, recovered ]
                           recovered: "back after ${steps.rollback.status}"
                     """);
-            assertAt(d, 12, "registered in on_failure:, which does not run when the job succeeds");
+            assertAt(d, 13, "registered in on_failure:, which does not run when the job succeeds");
         }
     }
 

@@ -18,8 +18,7 @@ public record Plan(
         List<Entry> steps,
         List<Hook> hooks,
         Map<String, Object> persist,
-        /* Reads "notify" in the config; a record component cannot be named after Object.notify(). */
-        Notification notification) {
+        List<Notification> notifications) {
 
     /**
      * One step of the plan.
@@ -60,8 +59,7 @@ public record Plan(
     }
 
     /**
-     * The message the job's notify policy would send if the run succeeded, and the channels it
-     * would go to.
+     * What one rule of the job's notify policy would send, and the channels it would go to.
      */
     public record Notification(List<String> to, String message) {
 

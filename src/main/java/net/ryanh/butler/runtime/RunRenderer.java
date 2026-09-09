@@ -59,14 +59,12 @@ public final class RunRenderer {
             }
         }
 
-        if (!run.persisted().isEmpty() || run.notification() != null) {
+        if (!run.persisted().isEmpty() || !run.notifications().isEmpty()) {
             out.add("");
         }
         persist(out, run.persisted());
-        if (run.notification() != null) {
-            out.add(PlanRenderer.pad("  notify", 12) + run.notification().channels() + " <- "
-                    + Literals.of(run.notification().message()));
-        }
+        PlanRenderer.notifications(out, run.notifications(),
+                PlanRenderer.pad("  notify", 12), 12);
 
         out.add("");
         out.add("  " + run.status().toString().toUpperCase(Locale.ROOT)

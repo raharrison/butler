@@ -107,6 +107,22 @@ class ContextTest {
     }
 
     @Test
+    @DisplayName("run.description is the job's, and null when it has none")
+    void jobDescription() {
+        Context described = context("""
+                jobs:
+                  j:
+                    description: Rolling deploy of the API
+                    on: [{uses: manual}]
+                    steps: [{uses: control.log, message: hi}]
+                """, Map.of());
+        assertEquals("Rolling deploy of the API", described.resolve("${run.description}"));
+
+        Context plain = context(JOB, Map.of());
+        assertEquals("j", plain.resolve("${default(run.description, run.job)}"));
+    }
+
+    @Test
     @DisplayName("run.duration reads as elapsed time, run.duration_ms is the exact figure")
     void outcomeDuration() {
         Context ctx = context(JOB, Map.of());

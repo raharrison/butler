@@ -1,9 +1,6 @@
 package net.ryanh.butler.cli;
 
-import net.ryanh.butler.config.model.ButlerConfig;
-import net.ryanh.butler.config.model.JobDef;
-import net.ryanh.butler.config.model.StepDef;
-import net.ryanh.butler.config.model.TriggerDef;
+import net.ryanh.butler.config.model.*;
 import net.ryanh.butler.util.Durations;
 import net.ryanh.butler.util.Literals;
 import picocli.CommandLine.Command;
@@ -124,13 +121,14 @@ public final class CheckCommand implements Callable<Integer> {
             indent(sb, 2).append("persist:\n");
             job.persist().forEach((k, v) -> kv(sb, 3, k, v));
         }
-        if (job.notifyPolicy() != null) {
-            var n = job.notifyPolicy();
+        if (!job.notifyPolicy().isEmpty()) {
             indent(sb, 2).append("notify:\n");
-            kv(sb, 3, "to", n.to());
-            kv(sb, 3, "on", n.on().stream()
-                    .map(o -> o.name().toLowerCase(Locale.ROOT)).toList());
-            n.messages().forEach((k, v) -> kv(sb, 3, k, v));
+            for (NotifyDef n : job.notifyPolicy()) {
+                indent(sb, 3).append("- to: ").append(value(n.to())).append('\n');
+                kv(sb, 4, "on", n.on().stream()
+                        .map(o -> o.name().toLowerCase(Locale.ROOT)).toList());
+                n.messages().forEach((k, v) -> kv(sb, 4, k, v));
+            }
         }
     }
 

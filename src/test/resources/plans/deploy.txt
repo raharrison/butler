@@ -19,4 +19,5 @@ DRY RUN  job=deploy  trigger=manual  version=1.2.4
   on_failure                                          not shown: reached only on failure
   persist   (not written)   deployed_version = "1.2.4"
                             current_release  = "/srv/apps/demo/releases/1.2.4"
-  notify    (not sent)      ops <- ":rocket: demo 1.2.4 deployed in <duration>"
+  notify    (not sent)      ops, oncall <- ":rocket: demo 1.2.4 deployed in <duration>"
+                            ops <- "demo is now 1.2.4"

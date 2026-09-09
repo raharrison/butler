@@ -267,11 +267,13 @@ jobs:
       current_release: ${vars.releases_root}/api/releases/${trigger.version}
 
     notify:
-      to: [ ops, oncall ]           # one name or a list
-      on: [ success, failure, recovered ]
-      success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
-      failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}, rollback ${steps.rollback.status}"
-      recovered: ":white_check_mark: api is back on ${trigger.version} after ${run.previous_status}"
+      - to: ops                     # one name or a list
+        on: [ success, recovered ]
+        success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
+        recovered: ":white_check_mark: api is back on ${trigger.version} after ${run.previous_status}"
+      - to: [ ops, oncall ]
+        on: [ failure ]
+        failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}, rollback ${steps.rollback.status}"
 ```
 
 Note what is *not* in there: no bash, no version comparison logic, no retry loops, no "is it up
@@ -294,7 +296,7 @@ one key away:
 
 The complete schemas are in CONFIGURATION.md: [job keys](CONFIGURATION.md#jobs),
 [reserved step keys](CONFIGURATION.md#steps) and the [result shape](CONFIGURATION.md#results)
-every step produces. Four things about them are design decisions rather than reference material:
+every step produces. Five things about them are design decisions rather than reference material:
 
 - **Everything except `on:` and `steps:` is optional.** A job with only those two is valid, and
   that is the floor the DSL should stay usable at.
@@ -309,6 +311,10 @@ every step produces. Four things about them are design decisions rather than ref
 - **A step's own output wins a name collision** with a common result field, as `http.request`'s
   `status` does. `ok`, `failed` and `skipped` still say how the step itself went, so the question
   "did this work" is always answerable the same way.
+- **`notify:` is a list of rules**, each with its own channels, outcomes and wording, because who
+  should be woken by a failure is rarely who wants to hear about a success. Routing per outcome
+  inside a single policy would be shorter, but cannot say two different things to two audiences
+  about one outcome.
 
 ### 3.4 One config, several files
 

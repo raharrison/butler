@@ -5,12 +5,13 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * A job's notify policy.
+ * One rule of a job's notify policy. A job may have several, each judged on its own.
  *
  * @param to       the channels to send through, each a name from the {@code notifiers:} block
  * @param messages message template per outcome, keyed by the lowercase outcome name
  */
-public record NotifyDef(List<String> to, List<Enums.Outcome> on, Map<String, String> messages) {
+public record NotifyDef(List<String> to, List<Enums.Outcome> on, Map<String, String> messages,
+                        String path) {
 
     /**
      * The message to send for an outcome, or null when the policy stays quiet about it.

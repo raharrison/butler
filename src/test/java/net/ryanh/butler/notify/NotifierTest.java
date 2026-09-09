@@ -53,7 +53,7 @@ class NotifierTest {
                     """.formatted(server.url("/hook")));
 
             assertEquals(Run.Status.SUCCESS, run.status(), run.message());
-            assertEquals("api 1.2.4 deployed", run.notification().message());
+            assertEquals("api 1.2.4 deployed", run.notifications().getFirst().message());
             assertEquals("{\"text\": \"api 1.2.4 deployed\"}",
                     server.received().getFirst().body());
         }
@@ -78,7 +78,7 @@ class NotifierTest {
                           success: "deployed in ${run.duration} (${run.duration_ms}ms)"
                     """.formatted(server.url("/hook")));
 
-            String message = run.notification().message();
+            String message = run.notifications().getFirst().message();
             assertTrue(message.matches("deployed in \\d+s \\(\\d+ms\\)"), message);
             assertEquals("deployed in " + Durations.human(run.duration())
                     + " (" + run.duration().toMillis() + "ms)", message);
@@ -180,7 +180,7 @@ class NotifierTest {
 
             assertEquals(List.of("would send   ops <- \"staging 1.2.4\""),
                     plan.steps().getFirst().body());
-            assertEquals("api 1.2.4 deployed", plan.notification().message());
+            assertEquals("api 1.2.4 deployed", plan.notifications().getFirst().message());
             assertEquals(List.of(), server.received(), "a dry run notifies nobody");
         }
     }

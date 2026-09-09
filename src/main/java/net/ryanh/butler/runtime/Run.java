@@ -20,7 +20,7 @@ import java.util.Map;
 public record Run(String id, String job, String trigger, Map<String, Object> facts,
                   Status status, Instant startedAt, Duration duration,
                   List<Plan.Entry> discover, Plan.Decision decision, List<Step> steps,
-                  Map<String, Object> persisted, Plan.Notification notification,
+                  Map<String, Object> persisted, List<Plan.Notification> notifications,
                   String failedStep, String message) {
 
     /**

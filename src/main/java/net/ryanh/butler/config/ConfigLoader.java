@@ -434,7 +434,7 @@ public final class ConfigLoader {
         List<StepDef> always = steps(c, "always");
         Map<String, String> persist = c.stringMap("persist");
         ButlerConfig.RunRetention retention = runRetention(c.object("run_retention"));
-        NotifyDef notify = notify(c.object("notify"), c.has("notify"));
+        List<NotifyDef> notify = notify(c);
 
         // The "already reported" guards keep one mistake to one message: a wrongly-typed `on:`
         // has already produced "expected a list", and adding "no triggers defined" on top of it
@@ -478,10 +478,15 @@ public final class ConfigLoader {
         return new ConcurrencyDef(group, mode, newestOnly);
     }
 
-    private static NotifyDef notify(Cursor c, boolean present) {
-        if (!present) {
-            return null;
+    private static List<NotifyDef> notify(Cursor c) {
+        List<NotifyDef> out = new ArrayList<>();
+        for (Cursor rc : c.objectOrObjects("notify")) {
+            out.add(rule(rc));
         }
+        return List.copyOf(out);
+    }
+
+    private static NotifyDef rule(Cursor c) {
         List<String> to = c.requiredStrings("to");
         List<Enums.Outcome> on = c.enumValues("on", Enums.Outcome.class);
         Map<String, String> messages = new LinkedHashMap<>();
@@ -496,7 +501,7 @@ public final class ConfigLoader {
         if (on.isEmpty()) {
             on = List.of(Enums.Outcome.SUCCESS, Enums.Outcome.FAILURE);
         }
-        return new NotifyDef(to, on, Collections.unmodifiableMap(messages));
+        return new NotifyDef(to, on, Collections.unmodifiableMap(messages), c.path());
     }
 
     // ---------------------------------------------------------------------- step

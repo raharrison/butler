@@ -119,8 +119,10 @@ jobs:
       current_release: ${vars.releases_root}/api/releases/${trigger.version}
 
     notify:
-      to: [ ops, oncall ]
-      on: [ success, failure, recovered ]
-      success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
-      failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}, rollback ${steps.rollback.status}"
-      recovered: ":white_check_mark: api is back on ${trigger.version} after ${run.previous_status}"
+      - to: ops
+        on: [ success, recovered ]
+        success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
+        recovered: ":white_check_mark: api is back on ${trigger.version} after ${run.previous_status}"
+      - to: [ ops, oncall ]
+        on: [ failure ]
+        failure: ":fire: api ${trigger.version} FAILED at ${run.failed_step}, rollback ${steps.rollback.status}"

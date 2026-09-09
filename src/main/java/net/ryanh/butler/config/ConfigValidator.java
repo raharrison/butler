@@ -1,9 +1,6 @@
 package net.ryanh.butler.config;
 
-import net.ryanh.butler.config.model.ButlerConfig;
-import net.ryanh.butler.config.model.JobDef;
-import net.ryanh.butler.config.model.StepDef;
-import net.ryanh.butler.config.model.TriggerDef;
+import net.ryanh.butler.config.model.*;
 import net.ryanh.butler.expr.ExprException;
 import net.ryanh.butler.expr.Expressions;
 import net.ryanh.butler.expr.Node;
@@ -82,22 +79,37 @@ public final class ConfigValidator {
         job.persist().forEach((k, v) ->
                 checkTemplate(diags, job.path() + "/persist/" + k, v, NAMESPACES));
 
-        if (job.notifyPolicy() != null) {
-            List<String> to = job.notifyPolicy().to();
+        for (NotifyDef rule : job.notifyPolicy()) {
+            List<String> to = rule.to();
             for (int i = 0; i < to.size(); i++) {
                 if (config.notifiers().containsKey(to.get(i))) {
                     continue;
                 }
-                String path = job.path() + "/notify/to" + (to.size() > 1 ? "/" + i : "");
+                String path = rule.path() + "/to" + (to.size() > 1 ? "/" + i : "");
                 diags.error(path, "no notifier named \"" + to.get(i) + "\""
                         + Suggestions.from(to.get(i), config.notifiers().keySet()));
             }
-            job.notifyPolicy().messages().forEach((k, v) ->
-                    checkTemplate(diags, job.path() + "/notify/" + k, v, NAMESPACES));
+            rule.messages().forEach((k, v) -> {
+                checkTemplate(diags, rule.path() + "/" + k, v, NAMESPACES);
+                checkOutcomeIsListed(diags, rule, k);
+            });
         }
 
         checkRegisterNames(job, diags, vocabulary);
         checkStateWithoutDiscover(job, diags);
+    }
+
+    /**
+     * A message for an outcome the rule's {@code on:} does not list is never sent.
+     */
+    private static void checkOutcomeIsListed(Diagnostics diags, NotifyDef rule, String outcome) {
+        String path = rule.path() + "/" + outcome;
+        if (diags.hasErrorAt(path)
+                || rule.on().stream().anyMatch(o -> o.name().equalsIgnoreCase(outcome))) {
+            return;
+        }
+        diags.warn(path, "\"" + outcome + "\" is not listed in \"on\", so this message is "
+                + "never sent");
     }
 
     /**
@@ -181,11 +193,11 @@ public final class ConfigValidator {
         job.persist().forEach((k, v) -> checkRendered(diags, job.path() + "/persist/" + k, v,
                 onSuccess, sections, "succeeds"));
 
-        if (job.notifyPolicy() != null) {
-            job.notifyPolicy().messages().forEach((outcome, message) -> {
+        for (NotifyDef rule : job.notifyPolicy()) {
+            rule.messages().forEach((outcome, message) -> {
                 // A recovery is a success, so its message sees what a success message sees.
                 boolean success = !outcome.equals("failure");
-                checkRendered(diags, job.path() + "/notify/" + outcome, message,
+                checkRendered(diags, rule.path() + "/" + outcome, message,
                         success ? onSuccess : onFailure, sections,
                         success ? "succeeds" : "fails");
             });

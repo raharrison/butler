@@ -76,18 +76,16 @@ public final class PlanRenderer {
         out.add("  steps");
         section(out, plan.steps());
 
-        if (!plan.hooks().isEmpty() || !plan.persist().isEmpty() || plan.notification() != null) {
+        if (!plan.hooks().isEmpty() || !plan.persist().isEmpty()
+                || !plan.notifications().isEmpty()) {
             out.add("");
         }
         for (Plan.Hook hook : plan.hooks()) {
             out.add(note(hook.name(), hook.note()));
         }
         persist(out, plan.persist());
-        if (plan.notification() != null) {
-            out.add(pad("  notify    (not sent)", PREVIEW_INDENT)
-                    + plan.notification().channels() + " <- "
-                    + Literals.of(plan.notification().message()));
-        }
+        notifications(out, plan.notifications(), pad("  notify    (not sent)", PREVIEW_INDENT),
+                PREVIEW_INDENT);
 
         warnings(out, plan);
         return String.join("\n", out) + "\n";
@@ -117,6 +115,19 @@ public final class PlanRenderer {
             return "!";
         }
         return e.number() > 0 ? String.valueOf(e.number()) : "-";
+    }
+
+    /**
+     * One line per rule, labelled once, as several persisted values are.
+     */
+    static void notifications(List<String> out, List<Plan.Notification> notifications,
+                              String label, int indent) {
+        boolean first = true;
+        for (Plan.Notification n : notifications) {
+            out.add((first ? label : " ".repeat(indent))
+                    + n.channels() + " <- " + Literals.of(n.message()));
+            first = false;
+        }
     }
 
     private static void persist(List<String> out, Map<String, Object> persist) {

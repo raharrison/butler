@@ -265,7 +265,7 @@ jobs:
     on_success: [ ... ]
     always: [ ... ]
     persist: { ... }           # state keys written after a successful run
-    notify: { to: [ ops, oncall ], on: [ success, failure, recovered ], success: "...", failure: "..." }
+    notify: [ { to: [ ops, oncall ], on: [ success, failure, recovered ], success: "...", failure: "..." } ]
 ```
 
 Every step takes the same reserved keys, whatever its type:
@@ -348,29 +348,30 @@ build you are running. Full parameter tables, defaults and outputs are in
 
 ### Notifiers
 
-| `uses`            | Parameters                                                                             |
-|-------------------|----------------------------------------------------------------------------------------|
-| `notify.slack`    | `webhook` (required), `channel`, `username`, `icon_emoji`                              |
-| `notify.discord`  | `webhook` (required), `username`                                                       |
-| `notify.ntfy`     | `topic` (required), `server` (default `https://ntfy.sh`), `title`, `priority`, `token` |
-| `notify.webhook`  | `url` (required), `field` (default `text`), `headers`                                  |
-| `notify.pushover` | `token` (required), `user` (required), `title`, `priority`, `sound`                    |
+| `uses`            | Parameters                                                                                                                        |
+|-------------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `notify.slack`    | `webhook` (required), `channel`, `username`, `icon_emoji`                                                                         |
+| `notify.discord`  | `webhook` (required), `username`                                                                                                  |
+| `notify.ntfy`     | `topic` (required), `server` (default `https://ntfy.sh`), `title`, `priority`, `token`                                            |
+| `notify.jolt`     | `server` (required), `token` (required), `title` (required), `importance`, `tags`, `click`, `icon`, `idempotency_key`, `metadata` |
+| `notify.webhook`  | `url` (required), `field` (default `text`), `headers`                                                                             |
+| `notify.pushover` | `token` (required), `user` (required), `title`, `priority`, `sound`                                                               |
 
 ### Expressions
 
 Conditions (`when:`, `until:`, `that:`) take a bare expression. Every other value is text with
 `${expr}` holes.
 
-| Namespace        | Holds                                                                                                                                         |
-|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| `vars.*`         | global `vars:` merged with job `vars:`, then any `control.set` step                                                                           |
-| `trigger.*`      | facts from the event, including regex capture groups                                                                                          |
-| `steps.<name>.*` | results of steps that declared `register:`                                                                                                    |
-| `state.*`        | persisted values, overlaid with what `discover:` observed                                                                                     |
-| `env.*`          | process environment                                                                                                                           |
-| `secret.*`       | resolved secrets                                                                                                                              |
-| `run.*`          | `id`, `job`, `trigger`, `started_at`, `dry_run`, `previous_status`; in hooks also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
-| `butler.*`       | `version`, `host`                                                                                                                             |
+| Namespace        | Holds                                                                                                                                                        |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `vars.*`         | global `vars:` merged with job `vars:`, then any `control.set` step                                                                                          |
+| `trigger.*`      | facts from the event, including regex capture groups                                                                                                         |
+| `steps.<name>.*` | results of steps that declared `register:`                                                                                                                   |
+| `state.*`        | persisted values, overlaid with what `discover:` observed                                                                                                    |
+| `env.*`          | process environment                                                                                                                                          |
+| `secret.*`       | resolved secrets                                                                                                                                             |
+| `run.*`          | `id`, `job`, `description`, `trigger`, `started_at`, `dry_run`, `previous_status`; in hooks also `status`, `duration`, `duration_ms`, `failed_step`, `error` |
+| `butler.*`       | `version`, `host`                                                                                                                                            |
 
 Operators: `and`, `or`, `not`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `matches`, `contains`.
 
@@ -415,9 +416,9 @@ jobs:
       - uses: systemd.reload
         unit: nginx.service
     notify:
-      to: ops
-      on: [ failure ]
-      failure: "nginx config is bad, not reloaded: ${run.error}"
+      - to: ops
+        on: [ failure ]
+        failure: "nginx config is bad, not reloaded: ${run.error}"
 ```
 
 ### A nightly job
@@ -440,15 +441,34 @@ jobs:
         that: steps.backup.stdout contains "backup complete"
         message: the script exited 0 without finishing
     notify:
-      to: [ ops, oncall ]
-      on: [ failure, recovered ]
-      failure: "backup failed at ${run.failed_step}"
-      recovered: "backup is working again"
+      - to: [ ops, oncall ]
+        on: [ failure, recovered ]
+        failure: "backup failed at ${run.failed_step}"
+        recovered: "backup is working again"
 ```
 
 A non-zero exit already fails `shell.run`, so the assertion is there for the case that does not.
 Naming `recovered` is what stops a nightly job that has broken from saying so every night and
 never saying when it stopped: it reports the break once and the repair once.
+
+### Tell the channel and the pager different things
+
+Each notify rule has its own audience, outcomes and wording:
+
+```yaml
+    notify:
+      - to: deploys
+        on: [ success, recovered ]
+        success: ":rocket: api ${trigger.version} deployed in ${run.duration}"
+        recovered: ":white_check_mark: api is back after ${run.previous_status}"
+
+      - to: [ oncall, pager ]
+        on: [ failure ]
+        failure: ":fire: api FAILED at ${run.failed_step}: ${run.error}"
+```
+
+Routine news goes to the room that wants it and only a failure wakes anyone. Each rule is judged on
+its own, so a channel in both hears from both.
 
 ### Ask a host what it is running, without an HTTP endpoint
 

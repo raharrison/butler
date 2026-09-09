@@ -10,6 +10,9 @@ notifiers:
   ops:
     uses: notify.slack
     channel: "#deploys"
+  oncall:
+    uses: notify.webhook
+    url: https://alerts.example.com/hooks/butler
 
 jobs:
 
@@ -66,8 +69,13 @@ jobs:
       deployed_version: ${trigger.version}
       current_release: ${vars.release_path}
 
+    # Two rules, both speaking on success, so the plan covers more than one message.
     notify:
-      to: ops
-      on: [ success, failure ]
-      success: ":rocket: ${vars.app} ${trigger.version} deployed in ${run.duration}"
-      failure: ":fire: ${vars.app} ${trigger.version} failed at ${run.failed_step}"
+      - to: [ ops, oncall ]
+        on: [ success, failure ]
+        success: ":rocket: ${vars.app} ${trigger.version} deployed in ${run.duration}"
+        failure: ":fire: ${vars.app} ${trigger.version} failed at ${run.failed_step}"
+
+      - to: ops
+        on: [ success ]
+        success: "${vars.app} is now ${trigger.version}"

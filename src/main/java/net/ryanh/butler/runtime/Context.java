@@ -109,7 +109,10 @@ public final class Context implements RunContext {
         ctx.namespaces.put("trigger", event.facts());
         ctx.namespaces.put("steps", ctx.steps);
         ctx.state.putAll(persisted.values());
-        // Known before the run starts, unlike the rest of the outcome half of run.*.
+        // Known before the run starts, unlike the rest of the outcome half of run.*. A job with
+        // no description: leaves it null, so default(run.description, run.job) has something to
+        // fall back to.
+        ctx.run.put("description", job.description());
         ctx.run.put("previous_status",
                 persisted.status() == null ? null : persisted.status().toString());
         ctx.namespaces.put("state", ctx.state);

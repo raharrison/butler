@@ -139,8 +139,8 @@ public final class RunRecorder {
         doc.put("when", run.decision() == null ? null : decision(run.decision()));
         doc.put("steps", run.steps().stream().map(RunRecorder::step).toList());
         doc.put("persisted", run.persisted());
-        doc.put("notified", run.notification() == null ? null
-                : Map.of("to", run.notification().to(), "message", run.notification().message()));
+        doc.put("notified", run.notifications().stream()
+                .map(n -> Map.of("to", n.to(), "message", n.message())).toList());
         return doc;
     }
 
@@ -312,7 +312,6 @@ public final class RunRecorder {
         }
 
         Map<?, ?> when = doc.get("when") instanceof Map<?, ?> m ? m : null;
-        Map<?, ?> notified = doc.get("notified") instanceof Map<?, ?> m ? m : null;
 
         return new Run(str(doc.get("id")), str(doc.get("job")), str(doc.get("trigger")),
                 values(doc.get("facts")), status(doc.get("status"), Run.Status.class),
@@ -322,9 +321,7 @@ public final class RunRecorder {
                 when == null ? null : new Plan.Decision(str(when.get("source")),
                         str(when.get("explained")), Boolean.TRUE.equals(when.get("result")),
                         str(when.get("error"))),
-                List.copyOf(steps), values(doc.get("persisted")),
-                notified == null ? null : new Plan.Notification(strings(notified.get("to")),
-                        str(notified.get("message"))),
+                List.copyOf(steps), values(doc.get("persisted")), notified(doc.get("notified")),
                 str(doc.get("failed_step")), str(doc.get("message")));
     }
 
@@ -347,6 +344,14 @@ public final class RunRecorder {
 
     private static List<?> list(Object value) {
         return value instanceof List<?> l ? l : List.of();
+    }
+
+    private static List<Plan.Notification> notified(Object value) {
+        return list(value).stream()
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .map(m -> new Plan.Notification(strings(m.get("to")), str(m.get("message"))))
+                .toList();
     }
 
     private static List<String> strings(Object value) {
