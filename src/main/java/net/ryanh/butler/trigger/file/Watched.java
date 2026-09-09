@@ -4,9 +4,12 @@ import net.ryanh.butler.spi.TriggerContext;
 import net.ryanh.butler.util.Literals;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -159,18 +162,26 @@ final class Watched {
                 ? override : ctx.pollInterval();
     }
 
+    /**
+     * Streamed rather than {@code Files.readAllBytes}, so hashing a large file costs a buffer, not
+     * the whole file, in JVM memory.
+     */
     static String sha256(Path file) throws IOException {
+        MessageDigest digest;
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(Files.readAllBytes(file));
-            StringBuilder sb = new StringBuilder(hash.length * 2);
-            for (byte b : hash) {
-                sb.append(Character.forDigit((b >> 4) & 0xf, 16));
-                sb.append(Character.forDigit(b & 0xf, 16));
-            }
-            return sb.toString();
+            digest = MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is required of every JVM", e);
         }
+        try (InputStream in = new DigestInputStream(Files.newInputStream(file), digest)) {
+            in.transferTo(OutputStream.nullOutputStream());
+        }
+        byte[] hash = digest.digest();
+        StringBuilder sb = new StringBuilder(hash.length * 2);
+        for (byte b : hash) {
+            sb.append(Character.forDigit((b >> 4) & 0xf, 16));
+            sb.append(Character.forDigit(b & 0xf, 16));
+        }
+        return sb.toString();
     }
 }

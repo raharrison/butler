@@ -71,6 +71,7 @@ public final class ChangedTrigger implements TriggerType<ChangedTrigger.Config> 
 
     private void poll(Config config, EventSink sink, TriggerContext ctx, AtomicBoolean running) {
         Watched.Settling settling = new Watched.Settling();
+        Watched.Snapshot lastHashed = null;
         String lastHash = null;
         boolean first = true;
 
@@ -78,9 +79,12 @@ public final class ChangedTrigger implements TriggerType<ChangedTrigger.Config> 
             try {
                 Watched.Snapshot snapshot = Files.isRegularFile(config.path())
                         ? Watched.Snapshot.of(config.path()) : null;
+                // Skip re-hashing a snapshot already hashed; nothing has changed to read.
                 if (snapshot != null
-                        && settling.settled(config.path(), snapshot, config.settle())) {
+                        && settling.settled(config.path(), snapshot, config.settle())
+                        && !snapshot.equals(lastHashed)) {
                     String hash = Watched.sha256(config.path());
+                    lastHashed = snapshot;
                     // on_startup: governs the first reading only; after that a change is a change.
                     boolean announce = first
                             ? config.onStartup() != OnStartup.NONE

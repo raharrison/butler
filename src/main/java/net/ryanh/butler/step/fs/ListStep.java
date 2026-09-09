@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -24,7 +25,7 @@ public final class ListStep implements StepType<ListStep.Config> {
      * @param orderBy how to rank them; by name otherwise
      * @param limit   keep only this many, counting back from the greatest
      */
-    public record Config(Path dir, String match, Order orderBy, Integer limit) {
+    public record Config(Path dir, Pattern match, Order orderBy, Integer limit) {
         public Config {
             orderBy = orderBy == null ? Order.NAME : orderBy;
         }
@@ -75,7 +76,7 @@ public final class ListStep implements StepType<ListStep.Config> {
         List<Path> paths = new ArrayList<>();
         try (Stream<Path> listed = Files.list(c.dir())) {
             listed.filter(p -> c.match() == null
-                            || p.getFileName().toString().matches(c.match()))
+                            || c.match().matcher(p.getFileName().toString()).matches())
                     .forEach(paths::add);
         }
         paths.sort(c.orderBy().comparator());
